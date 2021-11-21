@@ -10,6 +10,7 @@ For information on the associated code please contact:
 - Dr Joe Cursons (joseph.cursons (at) monash.edu)
 - Dr Momeneh (Sepideh) Foroutan (momeneh.foroutan (at) monash.edu)
 - Dr Christian Pflueger (christian.pflueger (at) uwa.edu.au)
+- Dr Liam Fearnley (fearnley.l (at) wehi.edu.au)
 
 For further information on the manuscript or project please contact:
 - Dr Charlene Waryah (charlene.waryah (at) perkins.org.au)
@@ -31,8 +32,12 @@ Data generated for this project will be uploaded to GEO over the coming months.
 A folder containing scripts and functions used for data analysis and figure generation.
 
 
-### off_target_predictions
+### output
 
-A folder containing the off-target predictions for gRNAs used in this study. 
+A folder containing intermediate output files used in this study. 
+
+- 20180518_dCas_pipe_out.txt: off-target gene predictions for gRNAs used in this study; determined with dsNickFury using the Azimuth and Elevation on-/off-target scoring algorithms. For further information please refer to the script <not yet uploaded> and the methods section of the associated manuscript.
+
+
 
 
