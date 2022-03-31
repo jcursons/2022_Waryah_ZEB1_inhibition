@@ -1,0 +1,9 @@
+{
+    "salmon_version": "0.8.2",
+    "index": "/wehisan/general/academic/lab_davis/genomes/salmon_index_GRCh38",
+    "libType": "A",
+    "unmatedReads": "/wehisan/general/academic/lab_davis/data/Blancafort/AGRF_CAGRF15987_CB2YGANXX/1_2_SUM159_CB2YGANXX_CGATGT_L002_R1.fastq.gz",
+    "threads": "7",
+    "output": "/wehisan/general/academic/lab_davis/Joe/deploy/salmon/2_SUM159",
+    "auxDir": "aux_info"
+}

@@ -1,0 +1,21 @@
+{
+    "read_files": "/wehisan/general/academic/lab_davis/data/Blancafort/AGRF_CAGRF16331_CC0U1ANXX/3_3_MDA231_gRNA_CC0U1ANXX_GTCCGCAC_L008_R1.fastq.gz",
+    "expected_format": "SR",
+    "compatible_fragment_ratio": 0.9908763539337889,
+    "num_compatible_fragments": 15983877,
+    "num_assigned_fragments": 16131051,
+    "num_consistent_mappings": 74180620,
+    "num_inconsistent_mappings": 1014107,
+    "MSF": 0,
+    "OSF": 0,
+    "ISF": 0,
+    "MSR": 0,
+    "OSR": 0,
+    "ISR": 0,
+    "SF": 1014107,
+    "SR": 74180620,
+    "MU": 0,
+    "OU": 0,
+    "IU": 0,
+    "U": 0
+}

@@ -1,0 +1,21 @@
+{
+    "read_files": "/wehisan/general/academic/lab_davis/data/Blancafort/AGRF_CAGRF15987_CB2YGANXX/4_1_pLV_All_Guides_CB2YGANXX_TAGCTT_L002_R1.fastq.gz",
+    "expected_format": "SR",
+    "compatible_fragment_ratio": 0.994217370843277,
+    "num_compatible_fragments": 18779242,
+    "num_assigned_fragments": 18888467,
+    "num_consistent_mappings": 90792866,
+    "num_inconsistent_mappings": 986820,
+    "MSF": 0,
+    "OSF": 0,
+    "ISF": 0,
+    "MSR": 0,
+    "OSR": 0,
+    "ISR": 0,
+    "SF": 986820,
+    "SR": 90792866,
+    "MU": 0,
+    "OU": 0,
+    "IU": 0,
+    "U": 0
+}

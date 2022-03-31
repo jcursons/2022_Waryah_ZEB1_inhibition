@@ -1,0 +1,222 @@
+## Load the required libraries
+library(biomaRt)
+library(tximport)
+library(readr)
+library(GenomicFeatures)
+library(limma)
+library(edgeR)
+library(Glimma)
+
+dirBase <- "C:/git/2022_Waryah_ZEB1_inhibition/"
+
+## Use the ENSEMBL GTF file to generate a dataframe of ENST to ENSG mappings
+txdb <- makeTxDbFromGFF("C:/db/ensembl/Homo_sapiens.GRCh38.89.gtf")
+k <- keys(txdb, keytype = "GENEID")
+df <- select(txdb, keys = k, keytype = "GENEID", columns = "TXNAME")
+tx2gene <- df[, 2:1]
+
+## Examine the data directory to identify the samples and their corresponding quant.sf files
+dirBatch1<-paste0(dirBase, "data/salmon/batch1")
+dirBatch2<-paste0(dirBase, "data/salmon/batch2")
+dirOut<-paste0(dirBase, "output")
+
+
+arrayBatch1Samples <- c("1_SUM159", "2_SUM159", "3_SUM159", "1_pLV_empty_control", "2_pLV_empty_control", "3_pLV_empty_control", "1_pLV_Guide_4", "2_pLV_Guide_4", "3_pLV_Guide_4", "1_pLV_All_Guides", "2_pLV_All_Guides", "3_pLV_All_Guides")
+filesBatch1 <- file.path(dirBatch1, as.list(arrayBatch1Samples), "quant.sf")
+
+arrayBatch2Samples <- c("1_MDA231_Wildtype", "2_MDA231_Wildtype", "3_MDA231_Wildtype", "1_MDA231_empty_control", "2_MDA231_empty_control", "3_MDA231_empty_control", "1_MDA231_gRNA_All", "2_MDA231_gRNA_All", "3_MDA231_gRNA_All", "1_MDA231_gRNA4", "2_MDA231_gRNA4", "3_MDA231_gRNA4", "1_SUM159_Wildtype", "2_SUM159_Wildtype", "3_SUM159_Wildtype")
+listBatch2Samples <- as.list(arrayBatch2Samples)
+filesBatch2 <- file.path(dirBatch2, listBatch2Samples, "quant.sf")
+
+filesAll <- c(filesBatch1, filesBatch2)
+arrayAllSmpNameClean <- c("B1_SUM159_WT_1", "B1_SUM159_WT_2", "B1_SUM159_WT_3", "B1_SUM159_EVC_1", "B1_SUM159_EVC_2", "B1_SUM159_EVC_3", "B1_SUM159_g4_1", "B1_SUM159_g4_2", "B1_SUM159_g4_3", "B1_SUM159_gAll_1", "B1_SUM159_gAll_2", "B1_SUM159_gAll_3", "B2_MDAMB231_WT_1", "B2_MDAMB231_WT_2", "B2_MDAMB231_WT_3", "B2_MDAMB231_EVC_1", "B2_MDAMB231_EVC_2", "B2_MDAMB231_EVC_3", "B2_MDAMB231_gAll_1", "B2_MDAMB231_gAll_2", "B2_MDAMB231_gAll_3", "B2_MDAMB231_g4_1", "B2_MDAMB231_g4_2", "B2_MDAMB231_g4_3", "B2_SUM159_WT_1", "B2_SUM159_WT_2", "B2_SUM159_WT_3")
+
+## Check that all of the files exist
+all(file.exists(filesAll))
+
+
+## Load the files into a single dataframe
+#	NB: the tximport documentation recommends lenghScaledTPM for input to voom limma but I am yet to discuss this with Gordon
+#			https://bioconductor.org/packages/release/bioc/vignettes/tximport/inst/doc/tximport.html
+txi <- tximport(filesAll, type = "salmon", tx2gene = tx2gene, ignoreTxVersion=TRUE,  countsFromAbundance = "lengthScaledTPM")
+names(txi)
+colnames(txi$counts) <- arrayAllSmpNameClean
+
+head(txi$counts)
+write.csv(as.data.frame(txi$counts), file=file.path(dirOut, "Waryah_Oct2017_ZEB1-epiCRISPR_QuantGeneLevel_lengthScaledTPM.csv"))
+
+
+# Load the tximport data into a DGEList object and then filter to remove genes with very low expression
+dataDGE <- DGEList(txi$counts)
+# dim(dataDGE)
+keep <- filterByExpr(dataDGE)
+dataDGE <- dataDGE[keep, ]
+# dim(dataDGE)
+dataDGE <- calcNormFactors(dataDGE)
+
+#	#	#	#	#	#	#	#	#	#	#	#	#	#	#	#	#
+## Load the corresponding metadata and attach
+#	#	#	#	#	#	#	#
+#pathDesignMatrix <- file.path(dirBase, "design_matrix.tsv")
+pathDesignMatrix <- file.path(paste0(dirBase, "data"), "design_matrix.tsv")
+matrixDesignIn <- read.table(pathDesignMatrix, row.names=1, header=TRUE, sep="\t")
+#summary(matrixDesignIn)
+
+#all(rownames(matrixDesignIn)==colnames(dataDGE))
+
+
+
+
+#	#	#	#	#	#	#	#	#	#	#	#	#	#	#	#	#
+## Map gene names to ENSEMBL IDs
+#	#	#	#	#	#	#	#
+geneids <- rownames(dataDGE)
+ 
+#load biomart
+ensembl = useMart('ensembl')
+ensembl = useDataset('hsapiens_gene_ensembl', mart = ensembl)
+ 
+#perform a query
+mappings = getBM(attributes = c('ensembl_gene_id', 'external_gene_name'),
+                 filters = 'ensembl_gene_id',
+                 values = geneids,
+                 mart = ensembl)
+ 
+#number of duplicated mappings - dups were occuring because of mappings to the HGNC symbols
+sum(duplicated(mappings$ensembl_gene_id))
+ 
+#unsuccesful mapping - these entries do not exist in the current version of ENSEMBL
+setdiff(geneids, mappings$ensembl_gene_id)
+ 
+#reorder for concatenation with existing results
+rownames(mappings) = mappings$ensembl_gene_id
+mappings = mappings[geneids, ]
+rownames(mappings) = NULL
+ 
+dataDGE$genes <- mappings
+
+
+#	#	#
+# Version with only SUM159 g4 vs gAll
+#	#	#
+groupSamples <- as.factor(matrixDesignIn$SampleGroup)
+dataDGE$samples$group <- groupSamples
+
+
+matrixDesign <- model.matrix(~0+groupSamples)
+colnames(matrixDesign) <- gsub("groupSamples", "", colnames(matrixDesign))
+
+# check the BCV plot
+dataDGE <- estimateDisp(dataDGE, matrixDesign)
+plotBCV(dataDGE)
+
+matrixContrast <- makeContrasts(
+   SUM159G4 = B1_SUM159_g4-B1_SUM159_EVC,
+   SUM159GAll = B1_SUM159_gAll-B1_SUM159_EVC,
+   SUM159GAllVs4 = B1_SUM159_gAll-B1_SUM159_g4,
+   MDAMB231G4 = B2_MDAMB231_g4-B2_MDAMB231_EVC,
+   MDAMB231GAll = B2_MDAMB231_gAll-B2_MDAMB231_EVC,
+   levels = colnames(matrixDesign))
+
+
+# Use voom, lmFit and eBayes to identify differentially expressed genes
+#	#	#	#	#	#	#	#
+
+par(mfrow=c(1,2))
+fitVoom <- voomWithQualityWeights(dataDGE, design = matrixDesign, plot=TRUE)
+fitLimma <- lmFit(fitVoom, design = matrixDesign)
+fitLimmaContrasts <- contrasts.fit(fitLimma, contrasts = matrixContrast)
+
+fitEmpBayes <- eBayes(fitLimmaContrasts, robust = TRUE)
+
+plotSA(fitEmpBayes, main="Final model: Mean−variance trend")
+
+fitTREATCriteria <- treat(fitEmpBayes, lfc=1)
+testsTREATfit <- decideTests(fitTREATCriteria)
+summary(testsTREATfit)
+
+
+#	#	#	#	#	#	#	#	#	#	#	#	#	#	#	#	#
+## Extract the differential expression gene tables and output as CSV files and glimma plots
+#	#	#	#	#	#	#	#
+diffExprSUM159G4 <- topTreat(fitTREATCriteria, coef=1, p.value=1, n=Inf)
+diffExprSUM159GAll <- topTreat(fitTREATCriteria, coef=2, p.value=1, n=Inf)
+diffExprSUM159GAllVsG4 <- topTreat(fitTREATCriteria, coef=3, p.value=1, n=Inf)
+diffExprMDAMB231G4 <- topTreat(fitTREATCriteria, coef=4, p.value=1, n=Inf)
+diffExprMDAMB231GAll <- topTreat(fitTREATCriteria, coef=5, p.value=1, n=Inf)
+
+
+write.csv(diffExprSUM159G4, file = file.path(dirOut, "voom-limma_SUM159_G4-EVC_diffExpr.csv"))
+write.csv(diffExprSUM159GAll, file = file.path(dirOut, "voom-limma_SUM159_GAll-EVC_diffExpr.csv"))
+write.csv(diffExprSUM159GAllVsG4, file = file.path(dirOut, "voom-limma_SUM159_GAll-G4_diffExpr.csv"))
+write.csv(diffExprMDAMB231G4, file = file.path(dirOut, "voom-limma_MDAMB231_G4-EVC_diffExpr.csv"))
+write.csv(diffExprMDAMB231GAll, file = file.path(dirOut, "voom-limma_MDAMB231_GAll-EVC_diffExpr.csv"))
+
+
+
+#	#	#	#	#	#	#	#	#	#	#	#	#	#	#	#	#
+## Specify the design matrix and contrast matrix for differential comparisons
+#	#	#	#	#	#	#	#
+
+
+#groupCellLine <- as.factor(matrixDesignIn$CellLine)
+#groupTreatment <- as.factor(matrixDesignIn$Treatment)
+
+matrixDesign <- model.matrix(~groupCellLine+groupTreatment)
+colnames(matrixDesign) <- gsub("groupCellLine", "", colnames(matrixDesign))
+colnames(matrixDesign) <- gsub("groupTreatment", "", colnames(matrixDesign))
+
+rownames(matrixDesign) <- rownames(metadataIn)
+
+# check the BCV plot
+dataDGE <- estimateDisp(dataDGE, matrixDesign)
+plotBCV(dataDGE)
+
+# compare each subtype against the mean of the other two subtypes
+
+matrixContrast <- makeContrasts(
+   ZEB1_KD = ZEB1_KD,
+   levels = colnames(matrixDesign))   
+matrixContrast
+
+
+#	#	#	#	#	#	#	#	#	#	#	#	#	#	#	#	#
+## Use voom, lmFit and eBayes to identify differentially expressed genes
+#	#	#	#	#	#	#	#
+
+par(mfrow=c(1,2))
+fitVoom <- voomWithQualityWeights(dataDGE, design = matrixDesign, plot=TRUE)
+fitLimma <- lmFit(fitVoom, design = matrixDesign)
+fitLimmaContrasts <- contrasts.fit(fitLimma, contrasts = matrixContrast)
+
+fitEmpBayes <- eBayes(fitLimmaContrasts, robust = TRUE)
+
+plotSA(fitEmpBayes, main="Final model: Mean−variance trend")
+
+fitTREATCriteria <- treat(fitEmpBayes, lfc=1)
+testsTREATfit <- decideTests(fitTREATCriteria)
+summary(testsTREATfit)
+
+
+#	#	#	#	#	#	#	#	#	#	#	#	#	#	#	#	#
+## Extract the differential expression gene tables and output as CSV files and glimma plots
+#	#	#	#	#	#	#	#
+#diffExprSUM159 <- topTreat(fitTREATCriteria, coef=1, p.value=1, n=Inf)
+#diffExprMDAMB231 <- topTreat(fitTREATCriteria, coef=2, p.value=1, n=Inf)
+#diffExprBatch <- topTreat(fitTREATCriteria, coef=3, p.value=1, n=Inf)
+
+#write.csv(diffExprSUM159, file = file.path(dirOut, "voom-limma_SUM159_diffExpr.csv"))
+#write.csv(diffExprMDAMB231, file = file.path(dirOut, "voom-limma_MDAMB231_diffExpr.csv"))
+#write.csv(diffExprBatch, file = file.path(dirOut, "voom-limma_Batch_diffExpr.csv"))
+
+diffExpr <- topTreat(fitTREATCriteria, coef=1, p.value=1, n=Inf)
+
+write.csv(diffExpr, file = file.path(dirOut, "voom-limma_combined_ZEB1-KD_diffExpr.csv"))
+
+#glMDPlot(testsTREATfit, coef=1, status=dt, main=colnames(testsTREATfit)[1], side.main="external_gene_name", counts=dataDGE$counts, groups=groupSamples, html="SUM159", launch=FALSE, path=dirBase, folder="SUM159")
+
+#glMDPlot(testsTREATfit, coef=2, status=dt, main=colnames(testsTREATfit)[2], side.main="external_gene_name", counts=dataDGE$counts, groups=groupSamples, html="MDAMB231", launch=FALSE, path=dirBase, folder="MDAMB231")
+
+#glMDPlot(testsTREATfit, coef=3, status=dt, main=colnames(testsTREATfit)[3], side.main="external_gene_name", counts=dataDGE$counts, groups=groupSamples, html="BatchEffects", launch=FALSE, path=dirBase, folder="BatchEffects")
+
+

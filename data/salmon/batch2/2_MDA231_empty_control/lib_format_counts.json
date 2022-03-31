@@ -1,0 +1,21 @@
+{
+    "read_files": "/wehisan/general/academic/lab_davis/data/Blancafort/AGRF_CAGRF16331_CC0U1ANXX/2_2_MDA231_empty_control_CC0U1ANXX_AGTCAACA_L008_R1.fastq.gz",
+    "expected_format": "SR",
+    "compatible_fragment_ratio": 0.9759177354903524,
+    "num_compatible_fragments": 17330191,
+    "num_assigned_fragments": 17757840,
+    "num_consistent_mappings": 81388709,
+    "num_inconsistent_mappings": 2425298,
+    "MSF": 0,
+    "OSF": 0,
+    "ISF": 0,
+    "MSR": 0,
+    "OSR": 0,
+    "ISR": 0,
+    "SF": 2425298,
+    "SR": 81388709,
+    "MU": 0,
+    "OU": 0,
+    "IU": 0,
+    "U": 0
+}

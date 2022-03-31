@@ -25,6 +25,12 @@ The scientific manuscript associated with this repository has been submitted for
 
 Data generated for this project will be uploaded to GEO over the coming months.
 
+### Public data
+
+ENSEMBL reference for RNA-seq analysis:
+- http://ftp.ensembl.org/pub/release-89/gtf/homo_sapiens/Homo_sapiens.GRCh38.89.gtf.gz  
+
+
 ## Project structure
 
 ### code
