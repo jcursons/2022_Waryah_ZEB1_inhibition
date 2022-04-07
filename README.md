@@ -1,6 +1,6 @@
 # 2022_Waryah_ZEB1_inhibition
 
-A repository with computational code and outputs to accompany the manuscript Waryah *et al.* (submitted), Synthetic epigenetic reprograming of breast cancer hybrid epithelial to mesenchymal states using the CRISPR/dCas9 platform.
+A repository with computational code and outputs to accompany the manuscript Waryah *et al.* (in preparation), Synthetic epigenetic reprograming of breast cancer hybrid epithelial to mesenchymal states using the CRISPR/dCas9 platform.
 
 Analysis of the RNA-seq and DNAme data was performed by @jcursons and @MomenehForoutan. Analysis of the ChIP-seq and ATAC-seq data was performed by Dr Christian Pflueger. Please see the script folder for further details.
 
