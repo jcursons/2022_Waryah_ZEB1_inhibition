@@ -417,68 +417,82 @@ class Process:
 
         return dict(zip(listBrCaLines, listSubtype))
 
-    def output_genes(flagResult=False):
+    def fig5_rnaseq_gene_list(flagResult=False):
+        # select a subset of genes from the RNA-seq DE analyses for display in Fig. 5b
 
-        numOutBothUpRegGenes = 24
-        numOutBothDownRegGenes = 8
+        # define significance threshold for later use
+        numAdjPValThresh = 0.05
 
-        numPerCondPerLineExtraGenes = 5
+        # we want to end up with a reasonable number for display
+        # --> set a maximum but it may be slightly lower as we filter on prior gene annotations
+        numMaxGenes = 60
 
-
+        # load dictionaries for mapping between ENSG and HGNC
         dictENSGToHGNC = Process.dict_gtf_ensg_to_hgnc()
         dictHGNCToENSG = dict(zip(dictENSGToHGNC.values(), dictENSGToHGNC.keys()))
 
+        # load some prior annotations of epithelial and mesenchymal genes
+        dictEpiMesGenes = Process.tan2012_cell_line_genes()
+        listEpiGenesENSG = [dictHGNCToENSG[strGene] for strGene in dictEpiMesGenes['epi_genes']]
+        listMesGenesENSG = [dictHGNCToENSG[strGene] for strGene in dictEpiMesGenes['mes_genes']]
+
+        # load the data
         dfMergedRNA = Process.diff_expr_data()
-        listDataGenes = dfMergedRNA.index.tolist()
+        # listDataGenes = dfMergedRNA.index.tolist()
+        listDataColumns = dfMergedRNA.columns.tolist()
+        listPValCols = [strCol for strCol in listDataColumns if 'adj.P.Val' in strCol]
+        listCellLines = [strCol.split(':adj.P.Val')[0] for strCol in listPValCols]
 
-        listCondsOut = ['SUM159', 'MDAMB231']
-        dfRanks = pd.DataFrame(data=np.zeros((len(listDataGenes), len(listCondsOut)), dtype=float),
-                               index=listDataGenes,
-                               columns=listCondsOut)
+        # only focus on genes that show significant DE in at least one condition
+        arrayIsSigInAnyCond = np.any(
+            dfMergedRNA[listPValCols].values.astype(float) < numAdjPValThresh,
+            axis=1)
+        listSigInAnyCond = [dfMergedRNA.index.tolist()[i] for i in np.where(arrayIsSigInAnyCond)[0]]
 
-        for iCond in range(len(listCondsOut)):
-            strCond = listCondsOut[iCond]
-            arrayLogFC = np.nan_to_num(dfMergedRNA[f'{strCond}:logFC'].values.astype(float))
-            arrayAdjPVal = dfMergedRNA[f'{strCond}:adj.P.Val'].values.astype(float)
+        # define a dataframe for gene ranks by product-of-rank
+        dfRanks = pd.DataFrame(data=np.zeros((len(listSigInAnyCond), len(listCellLines)),
+                                             dtype=float),
+                               index=listSigInAnyCond,
+                               columns=listCellLines)
+
+        # step through the cell lines and rank genes
+        for iCond in range(len(listCellLines)):
+            strCellLine = listCellLines[iCond]
+            # extract the logFC and adj-p value data
+            arrayLogFC = np.nan_to_num(dfMergedRNA[f'{strCellLine}:logFC'].reindex(listSigInAnyCond).values.astype(float))
+            arrayAdjPVal = dfMergedRNA[f'{strCellLine}:adj.P.Val'].reindex(listSigInAnyCond).values.astype(float)
+            # fix any nan values to be non-significant
             arrayAdjPVal[np.isnan(arrayAdjPVal)] = 1.0
-            listGenesRanked = [listDataGenes[i] for i in np.argsort(np.product((arrayLogFC, -np.log10(arrayAdjPVal)), axis=0))]
-            dfRanks.loc[listGenesRanked, strCond] = np.arange(start=1, stop=len(listGenesRanked)+1)
+            # rank genes by the logFC*-log(p)
+            listGenesRanked = [listSigInAnyCond[i] for i in
+                               np.argsort(np.product((arrayLogFC, -np.log10(arrayAdjPVal)), axis=0))]
+            dfRanks.loc[listGenesRanked, strCellLine] = np.arange(start=1, stop=len(listGenesRanked)+1)
 
+        # take the product of ranks across conditions and extract the final ranks
         arrayProdRankAcrossCond = np.product(dfRanks.values.astype(float), axis=1)
         arraySortedByProdRank = np.argsort(arrayProdRankAcrossCond)
-        listSortedByProdRank = [listDataGenes[i] for i in arraySortedByProdRank]
+        listSortedByProdRank = [listSigInAnyCond[i] for i in arraySortedByProdRank]
 
-        listOutputDownGenes = listSortedByProdRank[0:numOutBothDownRegGenes]
-        listOutputUpGenes = listSortedByProdRank[-numOutBothUpRegGenes:]
+        listMesInList = list(set(listSigInAnyCond).intersection(listMesGenesENSG))
+        listEpiInList = list(set(listSigInAnyCond).intersection(listEpiGenesENSG))
 
-        listExtraOutputUpGenes = []
-        listExtraOutputDownGenes = []
-        for iCond in range(len(listCondsOut)):
-            listExtraUpForCond = []
-            iUp = np.max(dfRanks.iloc[:,iCond].values.astype(float))
-            while len(listExtraUpForCond) < numPerCondPerLineExtraGenes:
-                strGeneToTest = dfRanks[dfRanks.iloc[:,iCond]==iUp].index.tolist()[0]
-                if not strGeneToTest in listOutputUpGenes:
-                    listExtraUpForCond.append(strGeneToTest)
-                iUp -= 1
-            listExtraOutputUpGenes += listExtraUpForCond
+        # ZEB1 inactivation tends to drive increases in gene expression (mainly epithelial genes)
+        #  so weight this towards up-regulated genes
+        numFromProdRank = numMaxGenes - len(listMesInList + listEpiInList)
+        numUpGenes = int((2/3)*numFromProdRank)
+        numDownGenes = int((1/3)*numFromProdRank)
 
-            listExtraDownForCond = []
-            iDown = 1
-            while len(listExtraDownForCond) < numPerCondPerLineExtraGenes:
-                strGeneToTest = dfRanks[dfRanks.iloc[:,iCond]==iDown].index.tolist()[0]
-                if not strGeneToTest in listOutputDownGenes:
-                    listExtraDownForCond.append(strGeneToTest)
-                iDown += 1
-            listExtraOutputDownGenes += listExtraDownForCond
+        # listSortedByProdRankHGNC = [dictENSGToHGNC[strGene] for strGene in listSortedByProdRank
+        #                             if strGene in dictENSGToHGNC.keys()]
+        listOutputDownGenes = listSortedByProdRank[0:numDownGenes]
+        listOutputUpGenes = listSortedByProdRank[-numUpGenes:]
 
         listOutputGeneOrder = listOutputDownGenes + \
-                              listExtraDownForCond + \
-                              listExtraOutputUpGenes + \
+                              list(set(listMesInList).difference(set(listOutputDownGenes))) + \
+                              list(set(listEpiInList).difference(set(listOutputUpGenes))) + \
                               listOutputUpGenes
 
         return listOutputGeneOrder
-
 
     def guides(flagResult=False,
                strGuideFileName='hu_guides.txt'):
@@ -644,14 +658,203 @@ class Process:
 
     def tan2012_cell_line_genes(flagResult=False):
 
+        # Cell line epithelial & mesenchymal gene lists from:
+        #   TZ Tan et al. (2012) [JP Thiery]. Epithelial-mesenchymal transition spectrum quantification
+        #    and its efficacy in deciphering survival and drug responses of cancer patients.
+        #   DOI: 10.15252/emmm.201404208
+
+        # load the gene lists
         dfGeneLists = pd.read_csv(
             os.path.join(PathDir.pathRefData, 'Thiery_generic_EMT_sig_cellLine.txt'), 
             sep='\t', header=0, index_col=None)
 
+        # extract as individual lists
         listEpiGenes = dfGeneLists['cellLine_sig'][dfGeneLists['epi_mes'] == 'epi'].values.tolist()
         listMesGenes = dfGeneLists['cellLine_sig'][dfGeneLists['epi_mes'] == 'mes'].values.tolist()
 
+        # update some more recently defined gene names
+        dictNewNames = {'C1orf106':'INAVA',
+                        'GPR56':'ADGRG1',
+                        'AIM1':'CRYBG1',
+                        'C19orf21':'MISP',
+                        'C10orf116':'ADIRF',
+                        'C12orf24':'FAM216A',
+                        'LEPRE1':'P3H1',
+                        'LHFP':'LHFPL6',
+                        'KDELC1':'POGLUT2',
+                        'PTRF':'CAVIN1'}
+
+        for iGene in range(len(listEpiGenes)):
+            strGene = listEpiGenes[iGene]
+            if strGene in dictNewNames.keys():
+                listEpiGenes[iGene] = dictNewNames[strGene]
+
+        for iGene in range(len(listMesGenes)):
+            strGene = listMesGenes[iGene]
+            if strGene in dictNewNames.keys():
+                listMesGenes[iGene] = dictNewNames[strGene]
+
+        # return as a dictionary of lists
         return {'epi_genes': listEpiGenes, 'mes_genes': listMesGenes}
+
+    def go_all_gene_with_traversal(flagPerformExtraction=False,
+                                   flagProcessGOToArray=False):
+
+        strOutputSaveFile='GO_annot_traversed.pickle'
+
+        if not os.path.exists(os.path.join(PathDir.pathRefData, strOutputSaveFile)):
+            flagPerformExtraction=True
+
+        if flagPerformExtraction:
+            # extract the GO data
+            dfGeneOntology = Extract.goa_human(flagPerformExtraction=False)
+            dfGOMapping = Extract.go_obo(flagPerformExtraction=False)
+            strTempMembMatrixFile = 'GO_memb_matrix_proc.pickle'
+            strInitGraphFile = 'GO_annot-orig_graph.pickle'
+
+            # determine the unique list of GO annotations
+            listUniqueGONumsFromMapping = pd.unique(dfGOMapping['ID'].values.ravel()).tolist()
+            listUniqueGONumsFromOntology = pd.unique(dfGeneOntology['GO_Num'].values.ravel()).tolist()
+            listUniqueMessRNAs = sorted(pd.unique(dfGeneOntology['HGNC'].values.ravel()).tolist())
+
+            listUniqueGONums = sorted(list(set(listUniqueGONumsFromMapping + listUniqueGONumsFromOntology)))
+
+            numUniqueMessRNAs = np.int64(len(listUniqueMessRNAs))
+            numUniqueGONums = np.int64(len(listUniqueGONums))
+
+            if np.bitwise_or(not os.path.exists(os.path.join(PathDir.strDataPath, strTempMembMatrixFile)),
+                             flagProcessGOToArray):
+
+                print('creating a membership matrix for GO annotations against genes, this may take some time')
+
+                arrayGOMembMatrix = np.zeros((numUniqueMessRNAs, numUniqueGONums), dtype=np.bool)
+
+                dictMessRNAIndices = dict(zip(listUniqueMessRNAs, np.arange(start=0, stop=len(listUniqueMessRNAs))))
+                dictGONumIndices = dict(zip(listUniqueGONums, np.arange(start=0, stop=len(listUniqueGONums))))
+
+                arrayProgCounter = np.linspace(start=0, stop=np.shape(dfGeneOntology)[0], num=100)[1:]
+
+                iProg = 0
+                for iRow in range(np.shape(dfGeneOntology)[0]):
+                    strGene = dfGeneOntology['HGNC'].iloc[iRow]
+                    strGOCat = dfGeneOntology['GO_Num'].iloc[iRow]
+
+                    arrayGOMembMatrix[dictMessRNAIndices[strGene], dictGONumIndices[strGOCat]] = True
+
+                    if iRow > arrayProgCounter[iProg]:
+                        print(f'\t{(iProg+1)}% complete..')
+                        iProg += 1
+
+                dfGOMembMatrix = pd.DataFrame(
+                    data=arrayGOMembMatrix,
+                    index=listUniqueMessRNAs,
+                    columns=listUniqueGONums)
+                dfGOMembMatrix.to_pickle(os.path.join(PathDir.strDataPath, strTempMembMatrixFile))
+
+            else:
+                print('Loading pre-processed boolean membership matrix for GO annotations..')
+                dfGOMembMatrix = pd.read_pickle(os.path.join(PathDir.strDataPath, strTempMembMatrixFile))
+                arrayGOMembMatrix = dfGOMembMatrix.values.astype(np.bool)
+
+            if not os.path.exists(os.path.join(PathDir.strDataPath, strInitGraphFile)):
+                print('creating a directed graph of GO annotation structure/hierarchy')
+                graphAnnotRel = nx.DiGraph()
+                graphAnnotRel.add_nodes_from(listUniqueGONums)
+
+                arrayProgCounter = np.linspace(start=0, stop=len(listUniqueGONums), num=100)[1:]
+
+                iProg = 0
+                for iGONum in range(len(listUniqueGONums)):
+                    strGONum = listUniqueGONums[iGONum]
+                    if strGONum in dfGOMapping['ID'].values.tolist():
+                        listParents = dfGOMapping['Parents'][dfGOMapping['ID'] == strGONum].tolist()[0]
+                        if not (not listParents):
+                            for strParent in listParents:
+                                graphAnnotRel.add_edge(strGONum, strParent)
+
+
+                    if iGONum > arrayProgCounter[iProg]:
+                        print(f'\t{(iProg+1)}% complete..')
+                        iProg += 1
+
+                nx.write_gpickle(graphAnnotRel, os.path.join(PathDir.strDataPath, strInitGraphFile))
+            else:
+                graphAnnotRel = nx.read_gpickle(os.path.join(PathDir.strDataPath, strInitGraphFile))
+
+            print('attempting to traverse GO graph structure')
+            print('warning: this uses an iterative while loop; ensure progression beyond this')
+            while Map.has_cycle(graphAnnotRel):
+                # while len(nx.find_cycle(graphAnnotRel)) > 0:
+                listCycles = nx.find_cycle(graphAnnotRel)
+                print('.. attempting to resolve cycle:')
+                for iCycleEdge in range(len(listCycles)):
+                    print('\t\t.. ' + listCycles[iCycleEdge][0] + ' <- ' + listCycles[iCycleEdge][1])
+
+                listCycleNodes = list()
+                for iCycleEdge in range(len(listCycles)):
+                    if listCycles[iCycleEdge][0] not in listCycleNodes:
+                        listCycleNodes.append(listCycles[iCycleEdge][0])
+                    if listCycles[iCycleEdge][1] not in listCycleNodes:
+                        listCycleNodes.append(listCycles[iCycleEdge][1])
+                arrayNodeGenes = np.sum(dfGOMembMatrix[listCycleNodes].values.astype(np.float), axis=0)
+                strLeastPopulatedNode = listCycleNodes[np.argsort(arrayNodeGenes)[0]]
+
+                for iCycleEdge in range(len(listCycles)):
+                    if listCycles[iCycleEdge][1] == strLeastPopulatedNode:
+                        graphAnnotRel.remove_edge(listCycles[iCycleEdge][0], listCycles[iCycleEdge][1])
+
+            print('attempting topological sort prior to traversal to increase coverage')
+            # listTopologicalSort = nx.topological_sort(graphAnnotRel, reverse=True)
+            listTopologicalSort = list(reversed(list(nx.topological_sort(graphAnnotRel))))
+            for strGO in listTopologicalSort:
+                # I think in a digraph, neighbors lists only the parents/input nodes (whereas predecessors does the full
+                #  traversal
+                listParentNodes = graphAnnotRel.neighbors(strGO)
+                if not (not listParentNodes):
+                    numNodeMatrixIndex = listUniqueGONums.index(strGO)
+                    arrayGeneIndices = np.where(arrayGOMembMatrix[:,numNodeMatrixIndex])[0]
+                    for strParent in listParentNodes:
+                        numParentNodeMatrixIndex = listUniqueGONums.index(strParent)
+                        arrayGOMembMatrix[arrayGeneIndices, numParentNodeMatrixIndex] = True
+
+            dfGOMemb = pd.DataFrame(data=arrayGOMembMatrix,    # values
+                                    index=listUniqueMessRNAs,    # 1st column as index
+                                    columns=listUniqueGONums)
+
+            # save the full dataframe using pickle
+            dfGOMemb.to_pickle(os.path.join(PathDir.strDataPath, strOutputSaveFile))
+
+        else:
+            if os.path.exists(os.path.join(PathDir.pathRefData, strOutputSaveFile)):
+                # load the data from the specified files
+                print('Loading the pre-processed GO annotation (w/ traversal) data frame from ' +
+                      os.path.join(PathDir.pathRefData, strOutputSaveFile))
+
+                dfGOMemb = pd.read_pickle(os.path.join(PathDir.pathRefData, strOutputSaveFile))
+
+            else:
+                print('Cannot load the pre-processed GO annotation (w/ traversal) data frame, ' +
+                      os.path.join(PathDir.pathRefData, strOutputSaveFile) +
+                      ' does not exist, change flagPerformExtraction')
+
+        return dfGOMemb
+
+    def go_target_genes(flagPerformExtraction=False):
+
+        strOutputSaveFile = 'target_gene_GO_annot.tsv'
+
+        if not os.path.exists(os.path.join(PathDir.pathRefData, strOutputSaveFile)):
+            flagPerformExtraction=True
+
+        if flagPerformExtraction:
+            dfAllGenes = Process.go_all_gene_with_traversal()
+            a=1
+
+        else:
+            dfGOMemb = pd.read_table(os.path.join(PathDir.pathRefData, strOutputSaveFile),
+                                     sep='\t')
+
+        return dfGOMemb
 
 class PlotFunc:
 
@@ -1186,6 +1389,8 @@ class PlotFunc:
                         handAxInMDAMB231='undefined',
                         handAxInSUM159='undefined'):
 
+        numAdjPValThresh = 0.05
+
         dictENSGToHGNC = Process.dict_gtf_ensg_to_hgnc()
         dictHGNCToENSG = dict(zip(dictENSGToHGNC.values(), dictENSGToHGNC.keys()))
 
@@ -1203,7 +1408,7 @@ class PlotFunc:
         listEpiGenesENSG = [dictHGNCToENSG[strGene] for strGene in listEpiGenes if strGene in dictHGNCToENSG.keys()]
         listMesGenesENSG = [dictHGNCToENSG[strGene] for strGene in listMesGenes if strGene in dictHGNCToENSG.keys()]
 
-        listOutputGeneOrder = Process.output_genes()
+        listOutputGeneOrder = Process.fig5_rnaseq_gene_list()
 
         arrayMaxAbsLogFC = np.max(np.abs(dfMergedRNA['MDAMB231:logFC'].values.astype(float)))
 
@@ -1243,7 +1448,7 @@ class PlotFunc:
             fontsize=Plot.numFontSize * 0.70,
             ha='center')
             for strGene in listOutputGeneOrder
-            if np.bitwise_and(dfMergedRNA['MDAMB231:adj.P.Val'].loc[strGene].astype(float) < 0.05,
+            if np.bitwise_and(dfMergedRNA['MDAMB231:adj.P.Val'].loc[strGene].astype(float) < numAdjPValThresh,
                               strGene in listEpiGenesENSG+listMesGenesENSG)]
         adjust_text(listHandTextMDAMB231,
                     arrowProps=dict(arrowstyle=None))
@@ -1292,7 +1497,7 @@ class PlotFunc:
             fontsize=Plot.numFontSize * 0.70,
             ha='center')
             for strGene in listOutputGeneOrder
-            if np.bitwise_and(dfMergedRNA['SUM159:adj.P.Val'].loc[strGene].astype(float) < 0.05,
+            if np.bitwise_and(dfMergedRNA['SUM159:adj.P.Val'].loc[strGene].astype(float) < numAdjPValThresh,
                               strGene in listEpiGenesENSG+listMesGenesENSG)]
         adjust_text(listHandTextSUM159,
                     arrowProps=dict(arrowstyle=None)
@@ -1388,6 +1593,87 @@ class PlotFunc:
 
         return flagResult
 
+    def rnaseq_heatmap_and_annot(flagResult=False,
+                                 handAxInHeatmap='undefined',
+                                 handAxInHMCMap='undefined'):
+
+        dictOutRNASeqCond = {'SUM159:logFC':'SUM159',
+                             'MDAMB231:logFC':'MDA-MB-231'}
+
+        dictENSGToHGNC = Process.dict_gtf_ensg_to_hgnc()
+
+        dfMergedRNA = Process.diff_expr_data()
+        listDataGenes = dfMergedRNA.index.tolist()
+        setDataGenes = set(listDataGenes)
+
+        for strGene in setDataGenes.difference(set(dictENSGToHGNC.keys())):
+            dictENSGToHGNC[strGene] = strGene
+
+        listFCOutCols = ['MDAMB231:logFC', 'SUM159:logFC']
+
+        listOutputGeneOrder = Process.fig5_rnaseq_gene_list()
+
+        numMaxAbsFC = np.max(np.abs(
+            np.ravel(dfMergedRNA[listFCOutCols].reindex(listOutputGeneOrder).values.astype(float))))
+        handRNASeqHM = handAxInHeatmap.matshow(dfMergedRNA[listFCOutCols].reindex(listOutputGeneOrder),
+                                      vmin=-numMaxAbsFC, vmax=numMaxAbsFC,
+                                      cmap=plt.cm.PRGn, aspect='auto')
+
+        handAxInHeatmap.set_xticks([])
+        handAxInHeatmap.set_yticks([])
+        for iGene in range(len(listOutputGeneOrder)):
+            strENSG = listOutputGeneOrder[iGene]
+            if dictENSGToHGNC[strENSG] == dictENSGToHGNC[strENSG]:
+                strGeneOut = dictENSGToHGNC[strENSG]
+            else:
+                strGeneOut = strENSG
+
+            handAxInHeatmap.text(-0.7, iGene,
+                        strGeneOut,
+                        ha='right', va='center',
+                        fontsize=Plot.numFontSize*0.65,
+                        fontstyle='italic')
+
+            if iGene < len(listOutputGeneOrder)-1:
+                handAxInHeatmap.axhline(y=iGene+0.5,
+                               xmin=0.0, xmax=1.0,
+                               color='0.5', lw=0.25)
+
+        for iCond in range(len(listFCOutCols)):
+            handAxInHeatmap.text(iCond-0.2, -0.5,
+                        dictOutRNASeqCond[listFCOutCols[iCond]],
+                        ha='left', va='bottom',
+                        fontsize=Plot.numFontSize*0.7,
+                        rotation=70)
+
+            if iCond < len(listFCOutCols)-1:
+                handAxInHeatmap.axvline(x=iCond+0.5,
+                               ymin=0.0, ymax=1.0,
+                               color='0.5', lw=0.25)
+
+
+        for strAxLoc in ['bottom', 'left', 'right', 'top']:
+            handAxInHeatmap.spines[strAxLoc].set_linewidth(0.1)
+
+        handSigColorBar = plt.colorbar(handRNASeqHM, cax=handAxInHMCMap,
+                                           orientation='horizontal')
+        handSigColorBar.ax.tick_params(width=0.5, length=2,
+                                       labelsize=Plot.numFontSize * 0.8)
+
+        arrayTickLoc = plt.MaxNLocator(3)
+        handSigColorBar.locator = arrayTickLoc
+        handSigColorBar.update_ticks()
+
+        for strAxLoc in ['bottom', 'left', 'right', 'top']:
+            handAxInHMCMap.spines[strAxLoc].set_linewidth(0.1)
+
+        handAxInHeatmap.text(0.5,
+                             len(listOutputGeneOrder)+4.5,
+                             'RNA-seq log$_{2}$FC',
+                     ha='center', va='bottom',
+                     fontsize=Plot.numFontSize)
+
+        return flagResult
 
 class Plot:
 
@@ -1407,7 +1693,6 @@ class Plot:
         numHexbinWidth = numHexbinHeight * (tupleFigSize[1] / tupleFigSize[0])
 
         numHeatMapPanelHeight = 0.43
-        numHeatMapPanelXLabelPos = 0.41
         numCMapHeight = 0.0075
 
         listOutputSelGO = ['GO:0070160',
@@ -1433,104 +1718,31 @@ class Plot:
                         'Hexbin_Landscape':[0.07, 0.05, numHexbinWidth, numHexbinHeight]
                         }
 
-        dictOutRNASeqCond = {'SUM159:logFC':'SUM159',
-                             'MDAMB231:logFC':'MDA-MB-231'}
-
-        dictENSGToHGNC = Process.dict_gtf_ensg_to_hgnc()
-
-        dfMergedRNA = Process.diff_expr_data()
-        listDataGenes = dfMergedRNA.index.tolist()
-        setDataGenes = set(listDataGenes)
-
-        for strGene in setDataGenes.difference(set(dictENSGToHGNC.keys())):
-            dictENSGToHGNC[strGene] = strGene
-
-        listFCOutCols = ['MDAMB231:logFC', 'SUM159:logFC']
-
-        listOutputGeneOrder = Process.output_genes()
-
-        # dfGeneOntology = GeneOntology.Map.all_transcripts_with_traversal()
+        # dfGeneOntology = Process.go_target_genes_with_traversal()
         #
         # dfTF = GeneSetScoring.ExtractList.transcription_factors()
         # listTFs = dfTF['ENSG'].values.tolist()
         # dictEpiMes = GeneSetScoring.ExtractList.tan2012_tumour_genes()
-
 
         handFig = plt.figure(figsize=tupleFigSize)
 
         # # # # # #       #       #       #       #       #       #       #
         # Volcano plots
 
+        # create the axes and pass to the associated plotting function
         handAxMDAMB231 = handFig.add_axes(dictPanelLoc['Volcano:MDA-MB-231'])
         handAxSUM159 = handFig.add_axes(dictPanelLoc['Volcano:SUM159'])
-
         _ = PlotFunc.epi_mes_volcano(handAxInMDAMB231=handAxMDAMB231,
                                      handAxInSUM159=handAxSUM159)
 
         # # # # # #       #       #       #       #       #       #       #
         # RNA-seq logFC
 
-        handAx = handFig.add_axes(dictPanelLoc['HeatMap:RNA-seq'])
+        handAxHMCMap = handFig.add_axes(dictPanelLoc['HeatMap_cmap:RNA-seq'])
+        handAxHeatmap = handFig.add_axes(dictPanelLoc['HeatMap:RNA-seq'])
 
-        numMaxAbsFC = np.max(np.abs(
-            np.ravel(dfMergedRNA[listFCOutCols].reindex(listOutputGeneOrder).values.astype(float))))
-        handRNASeqHM = handAx.matshow(dfMergedRNA[listFCOutCols].reindex(listOutputGeneOrder),
-                       vmin=-numMaxAbsFC, vmax=numMaxAbsFC,
-                       cmap=plt.cm.PRGn, aspect='auto')
-
-        handAx.set_xticks([])
-        handAx.set_yticks([])
-        for iGene in range(len(listOutputGeneOrder)):
-            strENSG = listOutputGeneOrder[iGene]
-            if dictENSGToHGNC[strENSG] == dictENSGToHGNC[strENSG]:
-                strGeneOut = dictENSGToHGNC[strENSG]
-            else:
-                strGeneOut = strENSG
-
-            handAx.text(-0.7, iGene,
-                        strGeneOut,
-                        ha='right', va='center',
-                        fontsize=Plot.numFontSize*0.65,
-                        fontstyle='italic')
-
-            if iGene < len(listOutputGeneOrder)-1:
-                handAx.axhline(y=iGene+0.5,
-                               xmin=0.0, xmax=1.0,
-                               color='0.5', lw=0.25)
-
-        for iCond in range(len(listFCOutCols)):
-            handAx.text(iCond-0.2, -0.5,
-                        dictOutRNASeqCond[listFCOutCols[iCond]],
-                        ha='left', va='bottom',
-                        fontsize=Plot.numFontSize*0.7,
-                        rotation=70)
-
-            if iCond < len(listFCOutCols)-1:
-                handAx.axvline(x=iCond+0.5,
-                               ymin=0.0, ymax=1.0,
-                               color='0.5', lw=0.25)
-
-
-        for strAxLoc in ['bottom', 'left', 'right', 'top']:
-            handAx.spines[strAxLoc].set_linewidth(0.1)
-
-        handCBarAx = handFig.add_axes(dictPanelLoc['HeatMap_cmap:RNA-seq'])
-        handSigColorBar = handFig.colorbar(handRNASeqHM, cax=handCBarAx,
-                                           orientation='horizontal')
-        handSigColorBar.ax.tick_params(labelsize=Plot.numFontSize * 0.8)
-
-        arrayTickLoc = plt.MaxNLocator(3)
-        handSigColorBar.locator = arrayTickLoc
-        handSigColorBar.update_ticks()
-
-        for strAxLoc in ['bottom', 'left', 'right', 'top']:
-            handCBarAx.spines[strAxLoc].set_linewidth(0.1)
-
-        structAxPos = handCBarAx.get_position()
-        handFig.text(structAxPos.x0+0.5*structAxPos.width,
-                     numHeatMapPanelXLabelPos, 'RNA-seq log$_{2}$FC',
-                     ha='center', va='bottom',
-                     fontsize=Plot.numFontSize*0.7)
+        _ = PlotFunc.rnaseq_heatmap_and_annot(handAxInHeatmap=handAxHeatmap,
+                                              handAxInHMCMap=handAxHMCMap)
 
 
         # # # # # # # # # #       #       #       #       #       #       #
@@ -1677,7 +1889,7 @@ class Plot:
 
         dfATACSeq = Process.atac_seq(flagPerformExtraction=True)
 
-        listOutputGeneOrder = Process.output_genes()
+        listOutputGeneOrder = Process.fig5_rnaseq_gene_list()
 
 
         listChIPColsOut = ['Peak Score', 'Annotation', 'Gene Name']
