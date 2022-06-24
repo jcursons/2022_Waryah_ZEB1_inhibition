@@ -1,32 +1,17 @@
 from adjustText import adjust_text
-# import BiomartFunctions
-# import CCLETools
-# import Cellosaurus
 import copy
 import csv
-# import DepMapTools
-# import ENSEMBLTools
-# import HGNCFunctions
-# import GeneOntology
-# import GeneSetScoring
-# import IlluminaFunctions
-# from lifelines import CoxPHFitter
-# from lifelines.estimation import KaplanMeierFitter
-# from lifelines.statistics import logrank_test as KMlogRankTest
 import matplotlib
 import matplotlib.patheffects as PathEffects
 import matplotlib.pyplot as plt
-# import miRBaseFunctions
 import networkx as nx
 import numpy as np
 import os
 import pandas as pd
 import pickle
-# import ProteinInteractionTools
 import scipy.cluster.hierarchy as SciPyClus
 import scipy.stats as scs
 import sys
-# import TCGAFunctions
 
 class PathDir:
 
@@ -417,7 +402,7 @@ class Process:
 
         return dict(zip(listBrCaLines, listSubtype))
 
-    def fig5_rnaseq_gene_list(flagResult=False):
+    def fig5_rnaseq_gene_lists(flagResult=False):
         # select a subset of genes from the RNA-seq DE analyses for display in Fig. 5b
 
         # define significance threshold for later use
@@ -444,37 +429,37 @@ class Process:
         listCellLines = [strCol.split(':adj.P.Val')[0] for strCol in listPValCols]
 
         # only focus on genes that show significant DE in at least one condition
-        arrayIsSigInAnyCond = np.any(
+        arrayIsSigInEitherLine = np.any(
             dfMergedRNA[listPValCols].values.astype(float) < numAdjPValThresh,
             axis=1)
-        listSigInAnyCond = [dfMergedRNA.index.tolist()[i] for i in np.where(arrayIsSigInAnyCond)[0]]
+        listSigInEitherLine = [dfMergedRNA.index.tolist()[i] for i in np.where(arrayIsSigInEitherLine)[0]]
 
         # define a dataframe for gene ranks by product-of-rank
-        dfRanks = pd.DataFrame(data=np.zeros((len(listSigInAnyCond), len(listCellLines)),
+        dfRanks = pd.DataFrame(data=np.zeros((len(listSigInEitherLine), len(listCellLines)),
                                              dtype=float),
-                               index=listSigInAnyCond,
+                               index=listSigInEitherLine,
                                columns=listCellLines)
 
         # step through the cell lines and rank genes
         for iCond in range(len(listCellLines)):
             strCellLine = listCellLines[iCond]
             # extract the logFC and adj-p value data
-            arrayLogFC = np.nan_to_num(dfMergedRNA[f'{strCellLine}:logFC'].reindex(listSigInAnyCond).values.astype(float))
-            arrayAdjPVal = dfMergedRNA[f'{strCellLine}:adj.P.Val'].reindex(listSigInAnyCond).values.astype(float)
+            arrayLogFC = np.nan_to_num(dfMergedRNA[f'{strCellLine}:logFC'].reindex(listSigInEitherLine).values.astype(float))
+            arrayAdjPVal = dfMergedRNA[f'{strCellLine}:adj.P.Val'].reindex(listSigInEitherLine).values.astype(float)
             # fix any nan values to be non-significant
             arrayAdjPVal[np.isnan(arrayAdjPVal)] = 1.0
             # rank genes by the logFC*-log(p)
-            listGenesRanked = [listSigInAnyCond[i] for i in
+            listGenesRanked = [listSigInEitherLine[i] for i in
                                np.argsort(np.product((arrayLogFC, -np.log10(arrayAdjPVal)), axis=0))]
             dfRanks.loc[listGenesRanked, strCellLine] = np.arange(start=1, stop=len(listGenesRanked)+1)
 
         # take the product of ranks across conditions and extract the final ranks
         arrayProdRankAcrossCond = np.product(dfRanks.values.astype(float), axis=1)
         arraySortedByProdRank = np.argsort(arrayProdRankAcrossCond)
-        listSortedByProdRank = [listSigInAnyCond[i] for i in arraySortedByProdRank]
+        listSortedByProdRank = [listSigInEitherLine[i] for i in arraySortedByProdRank]
 
-        listMesInList = list(set(listSigInAnyCond).intersection(listMesGenesENSG))
-        listEpiInList = list(set(listSigInAnyCond).intersection(listEpiGenesENSG))
+        listMesInList = list(set(listSigInEitherLine).intersection(listMesGenesENSG))
+        listEpiInList = list(set(listSigInEitherLine).intersection(listEpiGenesENSG))
 
         # ZEB1 inactivation tends to drive increases in gene expression (mainly epithelial genes)
         #  so weight this towards up-regulated genes
@@ -492,7 +477,8 @@ class Process:
                               list(set(listEpiInList).difference(set(listOutputUpGenes))) + \
                               listOutputUpGenes
 
-        return listOutputGeneOrder
+        return {'HeatmapOrder':listOutputGeneOrder,
+                'SigEitherLine':listSigInEitherLine}
 
     def guides(flagResult=False,
                strGuideFileName='hu_guides.txt'):
@@ -839,16 +825,31 @@ class Process:
 
         return dfGOMemb
 
-    def go_target_genes(flagPerformExtraction=False):
+    def go_rnaseq_diffexpr_genes(flagPerformExtraction=False):
 
-        strOutputSaveFile = 'target_gene_GO_annot.tsv'
+        strOutputSaveFile = 'rnaseq_diff_expr_GO_annot.tsv'
 
         if not os.path.exists(os.path.join(PathDir.pathRefData, strOutputSaveFile)):
             flagPerformExtraction=True
 
         if flagPerformExtraction:
+            dictENSGToHGNC = Process.dict_gtf_ensg_to_hgnc()
+            # dictHGNCToENSG = dict(zip(dictENSGToHGNC.values(), dictENSGToHGNC.keys()))
+
             dfAllGenes = Process.go_all_gene_with_traversal()
-            a=1
+
+            listRNASeqDEGenesENSG = Process.fig5_rnaseq_gene_lists()['SigEitherLine']
+            listRNASeqDEGenes = [dictENSGToHGNC[strGene] for strGene in listRNASeqDEGenesENSG
+                                 if strGene in dictENSGToHGNC.keys()]
+
+            dfTargetGenes = dfAllGenes.reindex(listRNASeqDEGenes).copy(deep=True)
+            dfTargetGenes[pd.isnull(dfTargetGenes)] = False
+            arrayGOObs = np.sum(dfTargetGenes.values.astype(float), axis=0)
+            listGOHasGene = [dfTargetGenes.columns.tolist()[i] for i in np.where(arrayGOObs > 0)[0]]
+
+            dfGOMemb = dfTargetGenes[listGOHasGene]
+            dfGOMemb.to_csv(os.path.join(PathDir.pathRefData, strOutputSaveFile),
+                            sep='\t')
 
         else:
             dfGOMemb = pd.read_table(os.path.join(PathDir.pathRefData, strOutputSaveFile),
@@ -856,273 +857,28 @@ class Process:
 
         return dfGOMemb
 
+    def transcription_factors(flagResult=False):
+
+        # 'Homo_sapiens_TF.txt' & 'Homo_sapiens_TF_cofactors.txt' from AnimalTFDB
+        #   now seems to be hosted at http://bioinfo.life.hust.edu.cn/AnimalTFDB/#!/
+        dfTFs = pd.read_csv(os.path.join(PathDir.pathRefData, 'Homo_sapiens_TF.txt'),
+                            sep='\t', header=0, index_col=1)
+
+        dfCoFactors = pd.read_csv(os.path.join(PathDir.pathRefData, 'Homo_sapiens_TF_cofactors.txt'),
+                                  sep='\t', header=0, index_col=1)
+
+        listAllENSG = dfTFs.index.tolist() + dfCoFactors.index.tolist()
+
+        listAllHGNC = dfTFs['Ensembl'].values.tolist() + dfCoFactors['Ensembl'].values.tolist()
+        listAllType = ['TF']*np.shape(dfTFs)[0] + ['CoFact']*np.shape(dfCoFactors)[0]
+
+        dfTFs = pd.DataFrame({'ENSG':listAllENSG,
+                              'HGNC':listAllHGNC,
+                              'Type':listAllType})
+
+        return dfTFs
+
 class PlotFunc:
-
-    def heat_map_with_sig_overlay_GO_enrich_and_DepMap(
-            flagResult=False,
-            strOutFilename='undefined',
-            listGenesForDisp=['undefined'],
-            listDiffExprCondsToShow=['undefined']):
-
-        dfDepMap = \
-            DepMapTools.Extract.depmap_data_by_genes_and_cell_lines(
-                listGenesOfInt=listGenesForDisp,
-                listCellLinesOfIntCCLE=['SUM159PT_BREAST',
-                                        'MDAMB231_BREAST',
-                                        'BT549_BREAST',
-                                        'HCC1395_BREAST',
-                                        'HS578T_BREAST'])
-
-
-        dictENSGToHGNC = BiomartFunctions.IdentMappers.defineEnsemblGeneToHGNCSymbolDict()
-        dictENSGToHGNC.pop('ENSG00000276776', None)
-        dictHGNCToENSG = dict(zip(dictENSGToHGNC.values(), dictENSGToHGNC.keys()))
-
-        dfCellLineDiffExpr = Process.diff_expr_data()
-
-        listAllGenesENSG = dfCellLineDiffExpr.index.tolist()
-        for strGene in list(set(listAllGenesENSG).difference(set(dictENSGToHGNC.keys()))):
-            dictENSGToHGNC[strGene] = strGene
-            dictHGNCToENSG[strGene] = strGene
-
-        listGenesForDispNoHGNC = [strGene for strGene in listGenesForDisp if strGene[0:len('ENSG')] == 'ENSG']
-
-        #ENSG00000276776 should be ENSG00000165929
-        #ENSG00000230439
-        for strGene in listGenesForDispNoHGNC:
-            dictHGNCToENSG[strGene] = strGene
-
-        listAllGenesHGNC = [dictENSGToHGNC[strGene] for strGene in listAllGenesENSG]
-        dfCellLineDiffExpr['Symbol:HGNC'] = pd.Series(listAllGenesHGNC, index=dfCellLineDiffExpr.index.tolist())
-
-        dfGeneOntology = GeneOntology.Map.all_transcripts_with_traversal()
-
-        listLogFCCols = [strCol + ':log2FoldChange' for strCol in listDiffExprCondsToShow]
-        listPValCols = [strCol + ':padj' for strCol in listDiffExprCondsToShow]
-
-        listGenesForDispENSG = [dictHGNCToENSG[strGene] for strGene in listGenesForDisp]
-
-        listOfDfGOEnrich = GeneOntology.EnrichmentTest.calc_relative_enrichment(
-            listOfListsMessRNAsToCheck=[listGenesForDisp],
-            listAllDataMessRNAs=listAllGenesHGNC,
-            stringListFormat='HGNC',
-            numMinGenesInCategory=3,
-            numMaxGenesInCategory=500)
-
-        dfSigUpDiffExprGO = \
-            listOfDfGOEnrich[0][
-                np.bitwise_and(listOfDfGOEnrich[0]['GOEnrichPVal'] < 1E-3,
-                               listOfDfGOEnrich[0]['GOObsNum'] > 2)].copy(deep=True)
-
-        arrayGOCatRankedByEnrich = np.argsort(dfSigUpDiffExprGO['GOEnrichPVal'].values.astype(float))
-
-        listGOCatsEnriched = [dfSigUpDiffExprGO.index.tolist()[i] for i in arrayGOCatRankedByEnrich]
-
-        if len(listGOCatsEnriched) > 25:
-            listGOCatsForDisp = [listGOCatsEnriched[i] for i in range(25)]
-        else:
-            listGOCatsForDisp = listGOCatsEnriched
-
-        dfGOCatMembership = pd.DataFrame(data=np.zeros((len(listGenesForDisp), len(listGOCatsForDisp)),
-                                                       dtype=float),
-                                         index=listGenesForDisp,
-                                         columns=listGOCatsForDisp)
-
-        for strCat in listGOCatsForDisp:
-            listGenesInThisGOCat = []
-            if strCat in dfGeneOntology.columns.tolist():
-                listGenesInThisGOCat = [dfGeneOntology.index.tolist()[i] for i in
-                                        np.where(dfGeneOntology[strCat])[0]]
-                listMatchedGenesInThisCat = list(set(listGenesInThisGOCat).intersection(set(listGenesForDisp)))
-            dfGOCatMembership[strCat].loc[listMatchedGenesInThisCat] = 1.0
-
-
-        arrayLogFCData = dfCellLineDiffExpr[listLogFCCols].loc[listGenesForDispENSG].values.astype(float)
-        numMaxAbsFC = np.max(np.abs(np.nan_to_num(np.ravel(arrayLogFCData))))
-
-        arrayPValData = np.nan_to_num(np.ravel(dfCellLineDiffExpr[listPValCols].loc[listGenesForDispENSG]))
-        numMinNonZeroPVal = np.min(arrayPValData[arrayPValData > 0])
-
-        arrayHorizLineSpacing = np.arange(start=3, stop=len(listGenesForDisp), step=4)
-
-        handFig = plt.figure()
-        handFig.set_size_inches(w=8, h=8)
-
-
-        numLHSPos = 0.11
-
-        numFCDataWidth = 0.10
-        numGOCatWidth = 0.50
-        numWidthSpacerFCToGO = 0.01
-
-        numGOLHS = numLHSPos + numFCDataWidth + numWidthSpacerFCToGO + 0.05
-        numDepMapLHS = numGOLHS + numGOCatWidth + 0.06
-
-        handAx = handFig.add_axes([numLHSPos, 0.02, numFCDataWidth, 0.85])
-
-        handHM = handAx.matshow(arrayLogFCData,
-                                cmap=plt.cm.PRGn,
-                                vmin=-numMaxAbsFC,
-                                vmax=numMaxAbsFC,
-                                aspect='auto',
-                                interpolation=None)
-
-        for iGene in range(len(listGenesForDisp)):
-            strGene = listGenesForDisp[iGene]
-            strENSG = listGenesForDispENSG[iGene]
-            handAx.text(-0.6, iGene, strGene, fontstyle='italic',
-                        ha='right', va='center', fontsize=Plot.numFontSize * 0.4)
-            handAx.text(1.55, iGene, strGene, fontstyle='italic',
-                        ha='left', va='center', fontsize=Plot.numFontSize * 0.4)
-
-            for iCol in range(len(listDiffExprCondsToShow)):
-                strColPVal = listDiffExprCondsToShow[iCol] + ':padj'
-                if np.isnan(dfCellLineDiffExpr[strColPVal].loc[strENSG]):
-                    numPVal = 1
-                elif dfCellLineDiffExpr[strColPVal].loc[strENSG] == 0:
-                    numPVal = numMinNonZeroPVal
-                else:
-                    numPVal = dfCellLineDiffExpr[strColPVal].loc[strENSG].astype(float) + \
-                              numMinNonZeroPVal
-
-                if np.bitwise_and(np.log10(numPVal) > -12, np.log10(numPVal) < -1):
-                    handAx.scatter(x=np.float(iCol), y=np.float(iGene),
-                                   marker='o',
-                                   s=(np.log10(numPVal) + 12) * 1.2,
-                                   c='0.6',
-                                   edgecolors='0.6',
-                                   alpha=1.0)
-                elif np.log10(numPVal) > -1:
-                    handAx.scatter(x=np.float(iCol), y=np.float(iGene),
-                                   marker='o',
-                                   s=(np.log10(numPVal) + 12) * 1.2,
-                                   c='k')
-
-        for iGene in arrayHorizLineSpacing:
-            handAx.axhline(y=iGene+0.5, xmin=0.0, xmax=1.0, lw=0.75, color='w', zorder=10)
-            handAx.axhline(y=iGene+0.5, xmin=0.0, xmax=1.0, lw=0.5, color='k', zorder=10)
-
-        handAx.set_xticks([])
-        handAx.set_yticks([])
-
-        for iCol in range(len(listDiffExprCondsToShow)):
-            strDiffExprCond = listDiffExprCondsToShow[iCol]
-            strCellLine = strDiffExprCond.split('-')[0]
-            strConds = strDiffExprCond.split('-')[1]
-            strCondOne = strConds.split('_vs_')[0]
-            strCondTwo = strConds.split('_vs_')[1]
-            strToDisp = strCellLine + '\n' + strCondOne + '\nvs. ' + strCondTwo
-            handAx.text(iCol-0.4, -0.6, strToDisp,
-                        ha='left', va='bottom', fontsize=Plot.numFontSize * 0.5,
-                        rotation=60)
-
-        handPValLegend = handFig.add_axes([0.02, 0.25, 0.01, 0.20])
-        handPValLegend.scatter(x=0.0, y=0.0,
-                               s=(np.log10(1) + 12) * 1.2,
-                               marker='o',
-                               c='k')
-        handPValLegend.scatter(x=0.0, y=1.0,
-                               s=(np.log10(1E-3) + 12) * 1.2,
-                               marker='o',
-                               c='0.6')
-        handPValLegend.scatter(x=0.0, y=2.0,
-                               s=(np.log10(1E-6) + 12) * 1.2,
-                               marker='o',
-                               c='0.6')
-        handPValLegend.scatter(x=0.0, y=3.0,
-                               s=(np.log10(1E-9) + 12) * 1.2,
-                               marker='o',
-                               c='0.6')
-        handPValLegend.set_ylim([-0.2, 3.2])
-        handPValLegend.set_xticks([])
-        handPValLegend.yaxis.set_ticks_position('right')
-        handPValLegend.yaxis.set_label_position('left')
-        handPValLegend.set_ylabel('log$_{10}$(adj. $p$-val)', fontsize=Plot.numFontSize*0.6)
-        handPValLegend.set_yticks([0, 1, 2, 3])
-        handPValLegend.set_yticklabels(['0', '-3', '-6', '-9'], fontsize=Plot.numFontSize*0.6)
-        # for handTick in handPValLegend.yaxis.get_major_ticks():
-        #     handTick.label.set_fontsize(Plot.numFontSize*0.6)
-
-
-        handHMCMapAx = handFig.add_axes([0.02, 0.55, 0.01, 0.20])
-        handAbundColorBar = handFig.colorbar(handHM,
-                                             cax=handHMCMapAx,
-                                             ticks=[-numMaxAbsFC, 0, numMaxAbsFC],
-                                             format='%02.1f')
-        handAbundColorBar.ax.tick_params(labelsize=Plot.numFontSize*0.6)
-        handHMCMapAx.yaxis.set_label_position('left')
-        handHMCMapAx.set_ylabel('log$_{2}$(FC)', fontsize=Plot.numFontSize*0.6)
-
-
-        handAx = handFig.add_axes([numGOLHS, 0.02, numGOCatWidth, 0.85])
-
-        handHM = handAx.matshow(dfGOCatMembership.values.astype(float),
-                                cmap=plt.cm.gray_r,
-                                vmin=0,
-                                vmax=1,
-                                aspect='auto',
-                                interpolation=None)
-
-        handAx.set_xticks([])
-        handAx.set_yticks([])
-
-        for iGene in arrayHorizLineSpacing:
-            handAx.axhline(y=iGene+0.5, xmin=0.0, xmax=1.0, lw=0.75, color='w', zorder=10)
-            handAx.axhline(y=iGene+0.5, xmin=0.0, xmax=1.0, lw=0.5, color='k', zorder=10)
-
-        for iCol in range(len(listGOCatsForDisp)):
-            strGONum = listGOCatsForDisp[iCol]
-            strGOCat = dfSigUpDiffExprGO['GOCat'].loc[strGONum]
-            handAx.text(iCol, np.float(len(listGenesForDisp))/2, strGONum + ' :: ' + strGOCat,
-                        ha='center', va='center', fontsize=Plot.numFontSize * 0.6,
-                        rotation=90,
-                        color='k',
-                        path_effects=[PathEffects.withStroke(linewidth=2, foreground="w")],
-                        zorder=11)
-
-
-        handAx = handFig.add_axes([numDepMapLHS, 0.02, 0.08, 0.85])
-        handDepMapHM = handAx.matshow(dfDepMap.values.astype(float),
-                                cmap=plt.cm.BrBG,
-                                vmin=-1.5,
-                                vmax=1.5,
-                                aspect='auto',
-                                interpolation=None)
-
-        for iGene in range(len(listGenesForDisp)):
-            strGene = listGenesForDisp[iGene]
-            handAx.text(-0.55, iGene, strGene, fontstyle='italic',
-                        ha='right', va='center', fontsize=Plot.numFontSize * 0.4)
-
-        for iGene in arrayHorizLineSpacing:
-            handAx.axhline(y=iGene+0.5, xmin=0.0, xmax=1.0, lw=0.75, color='w', zorder=10)
-            handAx.axhline(y=iGene+0.5, xmin=0.0, xmax=1.0, lw=0.5, color='k', zorder=10)
-
-        handAx.set_xticks([])
-        handAx.set_yticks([])
-
-        for iCol in range(np.shape(dfDepMap)[1]):
-            strCol = dfDepMap.columns.tolist()[iCol]
-            handAx.text(iCol-0.4, -0.5, strCol,
-                        ha='left', va='bottom', fontsize=Plot.numFontSize * 0.5,
-                        rotation=60,
-                        color='k')
-
-        handDepMapHMCMapAx = handFig.add_axes([numDepMapLHS+0.1, 0.55, 0.01, 0.20])
-        handAbundColorBar = handFig.colorbar(handDepMapHM,
-                                             cax=handDepMapHMCMapAx,
-                                             ticks=[-1.5, 0, 1.5],extend='both',
-                                             format='%02.1f')
-        handAbundColorBar.ax.tick_params(labelsize=Plot.numFontSize*0.6)
-        handHMCMapAx.yaxis.set_label_position('left')
-        handHMCMapAx.set_title('Score', fontsize=Plot.numFontSize*0.6)
-
-        handFig.savefig(os.path.join(Plot.strOutputLoc, strOutFilename),
-                        ext='png', dpi=300)
-
-        plt.close(handFig)
-
-        return flagResult
 
     def es_ms_landscape(
             flagResult=False,
@@ -1405,10 +1161,12 @@ class PlotFunc:
         listEpiGenes = dictEpiMesGenes['epi_genes']
         listMesGenes = dictEpiMesGenes['mes_genes']
 
-        listEpiGenesENSG = [dictHGNCToENSG[strGene] for strGene in listEpiGenes if strGene in dictHGNCToENSG.keys()]
-        listMesGenesENSG = [dictHGNCToENSG[strGene] for strGene in listMesGenes if strGene in dictHGNCToENSG.keys()]
+        listEpiGenesENSG = [dictHGNCToENSG[strGene] for strGene in listEpiGenes
+                            if strGene in dictHGNCToENSG.keys()]
+        listMesGenesENSG = [dictHGNCToENSG[strGene] for strGene in listMesGenes
+                            if strGene in dictHGNCToENSG.keys()]
 
-        listOutputGeneOrder = Process.fig5_rnaseq_gene_list()
+        listOutputGeneOrder = Process.fig5_rnaseq_gene_lists()['HeatmapOrder']
 
         arrayMaxAbsLogFC = np.max(np.abs(dfMergedRNA['MDAMB231:logFC'].values.astype(float)))
 
@@ -1445,7 +1203,7 @@ class PlotFunc:
             dfMergedRNA['MDAMB231:logFC'].loc[strGene].astype(float),
             -np.log10(dfMergedRNA['MDAMB231:adj.P.Val'].loc[strGene].astype(float)),
             dictENSGToHGNC[strGene],
-            fontsize=Plot.numFontSize * 0.70,
+            fontsize=Plot.numFontSize,
             ha='center')
             for strGene in listOutputGeneOrder
             if np.bitwise_and(dfMergedRNA['MDAMB231:adj.P.Val'].loc[strGene].astype(float) < numAdjPValThresh,
@@ -1453,14 +1211,17 @@ class PlotFunc:
         adjust_text(listHandTextMDAMB231,
                     arrowProps=dict(arrowstyle=None))
 
-        handAxInMDAMB231.set_ylabel('-log$_{10}$(adj. $p$-value)', fontsize=Plot.numFontSize*0.7)
+        handAxInMDAMB231.set_xticks([-5, -2.5, 0, 2.5, 5])
+
+        handAxInMDAMB231.set_ylabel('-log$_{10}$(adj. $p$-value)', fontsize=Plot.numFontSize)
+        handAxInMDAMB231.set_xlabel('log$_{2}$(fold change)', fontsize=Plot.numFontSize)
         handAxInMDAMB231.set_title('MDA-MB-231', fontsize=Plot.numFontSize)
 
         for handTick in handAxInMDAMB231.yaxis.get_major_ticks():
-            handTick.label.set_fontsize(Plot.numFontSize * 0.7)
+            handTick.label.set_fontsize(Plot.numFontSize)
 
         for handTick in handAxInMDAMB231.xaxis.get_major_ticks():
-            handTick.label.set_fontsize(Plot.numFontSize * 0.7)
+            handTick.label.set_fontsize(Plot.numFontSize)
 
         arrayMaxAbsLogFC = np.max(np.abs(dfMergedRNA['SUM159:logFC'].values.astype(float)))
 
@@ -1494,7 +1255,7 @@ class PlotFunc:
             dfMergedRNA['SUM159:logFC'].loc[strGene].astype(float),
             -np.log10(dfMergedRNA['SUM159:adj.P.Val'].loc[strGene].astype(float)),
             dictENSGToHGNC[strGene],
-            fontsize=Plot.numFontSize * 0.70,
+            fontsize=Plot.numFontSize,
             ha='center')
             for strGene in listOutputGeneOrder
             if np.bitwise_and(dfMergedRNA['SUM159:adj.P.Val'].loc[strGene].astype(float) < numAdjPValThresh,
@@ -1503,8 +1264,8 @@ class PlotFunc:
                     arrowProps=dict(arrowstyle=None)
                     )
 
-        handAxInSUM159.set_xlabel('log$_{2}$(fold change)', fontsize=Plot.numFontSize*0.7)
-        handAxInSUM159.set_ylabel('-log$_{10}$(adj. $p$-value)', fontsize=Plot.numFontSize*0.7)
+        handAxInSUM159.set_xlabel('log$_{2}$(fold change)', fontsize=Plot.numFontSize)
+        handAxInSUM159.set_ylabel('-log$_{10}$(adj. $p$-value)', fontsize=Plot.numFontSize)
         handAxInSUM159.set_title('SUM159', fontsize=Plot.numFontSize)
 
         # hide the right and top spines
@@ -1512,16 +1273,17 @@ class PlotFunc:
         handAxInSUM159.spines['top'].set_visible(False)
 
         for handTick in handAxInSUM159.yaxis.get_major_ticks():
-            handTick.label.set_fontsize(Plot.numFontSize * 0.7)
+            handTick.label.set_fontsize(Plot.numFontSize)
 
+        handAxInSUM159.set_xticks([-5, -2.5, 0, 2.5, 5])
         for handTick in handAxInSUM159.xaxis.get_major_ticks():
-            handTick.label.set_fontsize(Plot.numFontSize * 0.7)
+            handTick.label.set_fontsize(Plot.numFontSize)
 
-        plt.legend(loc='lower center',
-                   bbox_to_anchor=(0.5, 1.13),
-                   fontsize=Plot.numFontSize * 0.6,
+        plt.legend(loc='lower right',
+                   bbox_to_anchor=(1.25, 2.3),
+                   fontsize=Plot.numFontSize,
                    scatterpoints=1,
-                   ncol=3,
+                   ncol=1,
                    facecolor='white',
                    framealpha=1.0)
 
@@ -1595,10 +1357,19 @@ class PlotFunc:
 
     def rnaseq_heatmap_and_annot(flagResult=False,
                                  handAxInHeatmap='undefined',
-                                 handAxInHMCMap='undefined'):
+                                 handAxInHMCMap='undefined',
+                                 handAxInAnnot='undefined'):
 
         dictOutRNASeqCond = {'SUM159:logFC':'SUM159',
-                             'MDAMB231:logFC':'MDA-MB-231'}
+                             'MDAMB231:logFC':'MDA-\nMB-231'}
+
+        dictGOLabel = {'GO:0070160':'Tight junction',
+                       'GO:0005913':'Adherens junction',
+                       'GO:0005911':'Cell-cell junction'}
+        listOutputSelGO = list(dictGOLabel.keys())
+
+        listTFs = Process.transcription_factors()
+        dictEpiMes = Process.tan2012_cell_line_genes()
 
         dictENSGToHGNC = Process.dict_gtf_ensg_to_hgnc()
 
@@ -1611,7 +1382,7 @@ class PlotFunc:
 
         listFCOutCols = ['MDAMB231:logFC', 'SUM159:logFC']
 
-        listOutputGeneOrder = Process.fig5_rnaseq_gene_list()
+        listOutputGeneOrder = Process.fig5_rnaseq_gene_lists()['HeatmapOrder']
 
         numMaxAbsFC = np.max(np.abs(
             np.ravel(dfMergedRNA[listFCOutCols].reindex(listOutputGeneOrder).values.astype(float))))
@@ -1640,17 +1411,15 @@ class PlotFunc:
                                color='0.5', lw=0.25)
 
         for iCond in range(len(listFCOutCols)):
-            handAxInHeatmap.text(iCond-0.2, -0.5,
+            handAxInHeatmap.text(iCond, -0.7,
                         dictOutRNASeqCond[listFCOutCols[iCond]],
-                        ha='left', va='bottom',
-                        fontsize=Plot.numFontSize*0.7,
-                        rotation=70)
+                        ha='center', va='bottom',
+                        fontsize=Plot.numFontSize)
 
             if iCond < len(listFCOutCols)-1:
                 handAxInHeatmap.axvline(x=iCond+0.5,
                                ymin=0.0, ymax=1.0,
                                color='0.5', lw=0.25)
-
 
         for strAxLoc in ['bottom', 'left', 'right', 'top']:
             handAxInHeatmap.spines[strAxLoc].set_linewidth(0.1)
@@ -1673,6 +1442,47 @@ class PlotFunc:
                      ha='center', va='bottom',
                      fontsize=Plot.numFontSize)
 
+        dfGeneOntology = Process.go_rnaseq_diffexpr_genes()
+        listOutputGeneOrderHGNC = [dictENSGToHGNC[strGene] for strGene in listOutputGeneOrder]
+        dfGeneAnnot = dfGeneOntology[listOutputSelGO].reindex(listOutputGeneOrderHGNC)
+        dfGeneAnnot['Transcription factor'] = pd.Series([strGene in listTFs for strGene in listOutputGeneOrder],
+                                      index=listOutputGeneOrderHGNC)
+        dfGeneAnnot['Epithelial gene'] = pd.Series([strGene in dictEpiMes['epi_genes'] for strGene in listOutputGeneOrderHGNC],
+                                      index=listOutputGeneOrderHGNC)
+        dfGeneAnnot['Mesenchymal gene'] = pd.Series([strGene in dictEpiMes['mes_genes'] for strGene in listOutputGeneOrderHGNC],
+                                      index=listOutputGeneOrderHGNC)
+
+        listGeneAnnotCols = dfGeneAnnot.columns.tolist()
+        for iCol in range(len(listGeneAnnotCols)):
+            if listGeneAnnotCols[iCol] in dictGOLabel.keys():
+                listGeneAnnotCols[iCol] = listGeneAnnotCols[iCol] + '\n' + dictGOLabel[listGeneAnnotCols[iCol]]
+
+        handAxInAnnot.matshow(np.nan_to_num(dfGeneAnnot.values.astype(float)),
+                       cmap=plt.cm.Greys,
+                       vmin=0, vmax=1,
+                       aspect='auto'
+                       )
+        handAxInAnnot.set_xticks([])
+        handAxInAnnot.set_yticks([])
+        for iCol in range(len(listGeneAnnotCols)):
+            handAxInAnnot.text(iCol-0.3, -1,
+                        listGeneAnnotCols[iCol],
+                        ha='left', va='bottom',
+                        fontsize=Plot.numFontSize * 0.7,
+                        rotation=70
+                        )
+
+            if iCol < len(listGeneAnnotCols)-1:
+                handAxInAnnot.axvline(x=iCol+0.5,
+                               ymin=0.0, ymax=1.0,
+                               color='0.5', lw=0.25)
+
+        for iRow in range(np.shape(dfGeneAnnot)[0]):
+            if iRow < np.shape(dfGeneAnnot)[0]-1:
+                handAxInAnnot.axhline(y=iRow+0.5,
+                               xmin=0.0, xmax=1.0,
+                               color='0.5', lw=0.25)
+
         return flagResult
 
 class Plot:
@@ -1687,21 +1497,13 @@ class Plot:
         tupleFigSize = (6.5, 9.5)
 
         numVolcanoHeight = 0.17
-        numVolcanoWidth = 0.35
+        numVolcanoWidth = 0.37
 
         numHexbinHeight = 0.33
         numHexbinWidth = numHexbinHeight * (tupleFigSize[1] / tupleFigSize[0])
 
         numHeatMapPanelHeight = 0.43
         numCMapHeight = 0.0075
-
-        listOutputSelGO = ['GO:0070160',
-                           'GO:0005913',
-                           'GO:0005911']
-
-        dictGOLabel = {'GO:0070160':'Tight junction',
-                       'GO:0005913':'Adherens junction',
-                       'GO:0005911':'Cell-cell junction'}
 
         arrayGridSpec = matplotlib.gridspec.GridSpec(
             nrows=3, ncols=2,
@@ -1710,19 +1512,13 @@ class Plot:
             hspace=0.50, wspace=0.65
         )
 
-        dictPanelLoc = {'Volcano:MDA-MB-231':[0.07, 0.90-numVolcanoHeight, numVolcanoWidth, numVolcanoHeight],
-                        'Volcano:SUM159':[0.07, 0.48, numVolcanoWidth, numVolcanoHeight],
+        dictPanelLoc = {'Volcano:MDA-MB-231':[0.09, 0.90-numVolcanoHeight, numVolcanoWidth, numVolcanoHeight],
+                        'Volcano:SUM159':[0.09, 0.48, numVolcanoWidth, numVolcanoHeight],
                         'HeatMap:RNA-seq':[0.64, 0.47, 0.14, numHeatMapPanelHeight],
                         'HeatMap_cmap:RNA-seq':[0.66, 0.455, 0.10, numCMapHeight],
                         'HeatMap:RNA-seq_GO':[0.79, 0.47, 0.18, numHeatMapPanelHeight],
                         'Hexbin_Landscape':[0.07, 0.05, numHexbinWidth, numHexbinHeight]
                         }
-
-        # dfGeneOntology = Process.go_target_genes_with_traversal()
-        #
-        # dfTF = GeneSetScoring.ExtractList.transcription_factors()
-        # listTFs = dfTF['ENSG'].values.tolist()
-        # dictEpiMes = GeneSetScoring.ExtractList.tan2012_tumour_genes()
 
         handFig = plt.figure(figsize=tupleFigSize)
 
@@ -1734,60 +1530,32 @@ class Plot:
         handAxSUM159 = handFig.add_axes(dictPanelLoc['Volcano:SUM159'])
         _ = PlotFunc.epi_mes_volcano(handAxInMDAMB231=handAxMDAMB231,
                                      handAxInSUM159=handAxSUM159)
+        structAxPos = handAxMDAMB231.get_position()
+        handFig.text(structAxPos.x0-0.15*structAxPos.width,
+                     structAxPos.y0+1.1*structAxPos.height,
+                     'a',
+                     ha='left',
+                     va='center',
+                     fontsize=Plot.numFontSize,
+                     fontweight='bold')
+        handFig.text(structAxPos.x0-0.15*structAxPos.width,
+                     structAxPos.y0+1.3*structAxPos.height,
+                     'Fig. 5',
+                     ha='left',
+                     va='center',
+                     fontsize=Plot.numFontSize,
+                     fontweight='bold')
 
         # # # # # #       #       #       #       #       #       #       #
-        # RNA-seq logFC
+        # RNA-seq logFC & GO results
 
         handAxHMCMap = handFig.add_axes(dictPanelLoc['HeatMap_cmap:RNA-seq'])
         handAxHeatmap = handFig.add_axes(dictPanelLoc['HeatMap:RNA-seq'])
-
+        handAxAnnot = handFig.add_axes(dictPanelLoc['HeatMap:RNA-seq_GO'])
         _ = PlotFunc.rnaseq_heatmap_and_annot(handAxInHeatmap=handAxHeatmap,
-                                              handAxInHMCMap=handAxHMCMap)
+                                              handAxInHMCMap=handAxHMCMap,
+                                              handAxInAnnot=handAxAnnot)
 
-
-        # # # # # # # # # #       #       #       #       #       #       #
-        # # RNA-seq GO analysis
-        # handAx = handFig.add_axes(dictPanelLoc['HeatMap:RNA-seq_GO'])
-        # listOutputGeneOrderHGNC = [dictENSGToHGNC[strGene] for strGene in listOutputGeneOrder]
-        # dfGeneAnnot = dfGeneOntology[listOutputSelGO].reindex(listOutputGeneOrderHGNC)
-        # dfGeneAnnot['Transcription factor'] = pd.Series([strGene in listTFs for strGene in listOutputGeneOrder],
-        #                               index=listOutputGeneOrderHGNC)
-        # dfGeneAnnot['Epithelial gene'] = pd.Series([strGene in dictEpiMes['epi_genes'] for strGene in listOutputGeneOrderHGNC],
-        #                               index=listOutputGeneOrderHGNC)
-        # dfGeneAnnot['Mesenchymal gene'] = pd.Series([strGene in dictEpiMes['mes_genes'] for strGene in listOutputGeneOrderHGNC],
-        #                               index=listOutputGeneOrderHGNC)
-        #
-        # listGeneAnnotCols = dfGeneAnnot.columns.tolist()
-        # for iCol in range(len(listGeneAnnotCols)):
-        #     if listGeneAnnotCols[iCol] in dictGOLabel.keys():
-        #         listGeneAnnotCols[iCol] = listGeneAnnotCols[iCol] + '\n' + dictGOLabel[listGeneAnnotCols[iCol]]
-        #
-        # handAx.matshow(np.nan_to_num(dfGeneAnnot.values.astype(float)),
-        #                cmap=plt.cm.Greys,
-        #                vmin=0, vmax=1,
-        #                aspect='auto'
-        #                )
-        # handAx.set_xticks([])
-        # handAx.set_yticks([])
-        # for iCol in range(len(listGeneAnnotCols)):
-        #     handAx.text(iCol-0.3, -1,
-        #                 listGeneAnnotCols[iCol],
-        #                 ha='left', va='bottom',
-        #                 fontsize=Plot.numFontSize * 0.7,
-        #                 rotation=70
-        #                 )
-        #
-        #     if iCol < len(listGeneAnnotCols)-1:
-        #         handAx.axvline(x=iCol+0.5,
-        #                        ymin=0.0, ymax=1.0,
-        #                        color='0.5', lw=0.25)
-        #
-        # for iRow in range(np.shape(dfGeneAnnot)[0]):
-        #     if iRow < np.shape(dfGeneAnnot)[0]-1:
-        #         handAx.axhline(y=iRow+0.5,
-        #                        xmin=0.0, xmax=1.0,
-        #                        color='0.5', lw=0.25)
-        #
         # # # # # # # # # #       #       #       #       #       #       #
         # # Hexbin landscape
         # handAx = handFig.add_axes(dictPanelLoc['Hexbin_Landscape'])
@@ -1827,446 +1595,6 @@ class Plot:
         pathOut = os.path.join(Plot.strOutputLoc, 'figure_5')
         for strFormat in Plot.listFileFormats:
             handFig.savefig(os.path.join(pathOut, 'Figure5.'+strFormat),
-                            ext=strFormat, dpi=300)
-        plt.close(handFig)
-
-        return flagResult
-
-    def figure_six(flagResult=False):
-
-        tupleFigSize = (6.5, 9.5)
-
-        numVolcanoHeight = 0.17
-        numVolcanoWidth = 0.30
-
-        numHexbinHeight = 0.33
-        numHexbinWidth = numHexbinHeight * (tupleFigSize[1] / tupleFigSize[0])
-
-        numHeatMapPanelHeight = 0.40
-        numHeatMapPanelXLabelPos = 0.44
-        numCMapHeight = 0.0075
-
-        arrayGridSpec = matplotlib.gridspec.GridSpec(
-            nrows=3, ncols=2,
-            left=0.65, right=0.95,
-            bottom=0.07, top=0.40,
-            hspace=0.50, wspace=0.65
-        )
-
-        dictPanelLoc = {'Volcano:MDA-MB-231':[0.07, 0.90-numVolcanoHeight, numVolcanoWidth, numVolcanoHeight],
-                        'Volcano:SUM159':[0.07, 0.50, numVolcanoWidth, numVolcanoHeight],
-                        'HeatMap:RNA-seq':[0.60, 0.50, 0.07, numHeatMapPanelHeight],
-                        'HeatMap_cmap:RNA-seq':[0.60, 0.485, 0.07, numCMapHeight],
-                        'HeatMap:DNAme':[0.70, 0.50, 0.09, numHeatMapPanelHeight],
-                        'HeatMap_cmap:DNAme':[0.71, 0.485, 0.07, numCMapHeight],
-                        'HeatMap_cmap:DNAme_type':[0.71, 0.905, 0.07, numCMapHeight],
-                        'HeatMap:ATAC-seq':[0.81, 0.50, 0.07, numHeatMapPanelHeight],
-                        'HeatMap_cmap:ATAC-seq':[0.82, 0.485, 0.05, numCMapHeight],
-                        'HeatMap:ChIP-seq':[0.90, 0.50, 0.07, numHeatMapPanelHeight],
-                        'HeatMap_cmap:ChIP-seq':[0.91, 0.485, 0.05, numCMapHeight],
-                        'Hexbin_Landscape':[0.07, 0.07, numHexbinWidth, numHexbinHeight]
-                        }
-
-        dictOutRNASeqCond = {'SUM159:logFC':'SUM159',
-                             'MDAMB231:logFC':'MDA-MB-231'}
-
-        dictENSGToHGNC = Process.dict_gtf_ensg_to_hgnc()
-        dictHGNCToENSG = dict(zip(dictENSGToHGNC.values(), dictENSGToHGNC.keys()))
-
-        dfMergedRNA = Process.diff_expr_data()
-        listDataGenes = dfMergedRNA.index.tolist()
-        setDataGenes = set(listDataGenes)
-
-        listFCOutCols = ['MDAMB231:logFC', 'SUM159:logFC']
-
-        for strGene in setDataGenes.difference(set(dictENSGToHGNC.keys())):
-            dictENSGToHGNC[strGene] = strGene
-
-        dfPublicChIPSeq = Process.chip_seq()
-
-        dfLocalDNAMe = Process.dna_me_from_sep()
-        dfLocalDNAMe.set_index('Probes', inplace=True)
-
-        dfATACSeq = Process.atac_seq(flagPerformExtraction=True)
-
-        listOutputGeneOrder = Process.fig5_rnaseq_gene_list()
-
-
-        listChIPColsOut = ['Peak Score', 'Annotation', 'Gene Name']
-        listOfListsMatchedChIP = []
-        numMaxPeak = 0
-        for strGene in listOutputGeneOrder:
-            if dictENSGToHGNC[strGene] == dictENSGToHGNC[strGene]:
-                strHGNC = dictENSGToHGNC[strGene]
-                if strHGNC in dfPublicChIPSeq['Gene Name'].values.tolist():
-                    sliceChIPForGene = dfPublicChIPSeq[dfPublicChIPSeq['Gene Name']==strHGNC]
-                    listOfListsMatchedChIP.append(sliceChIPForGene[listChIPColsOut].copy(deep=True))
-                else:
-                    listOfListsMatchedChIP.append([np.nan])
-            else:
-                listOfListsMatchedChIP.append([np.nan])
-
-        # listMatchedChIPLen = [len(listOfListsMatchedChIP[i]) for i in range(len(listOfListsMatchedChIP))]
-        # set(listMatchedChIPLen)
-        # Out[5]: {1, 2, 3, 5, 6}
-        # ---> 30 min common product
-        dfChIPForDisp = pd.DataFrame(data=np.zeros((len(listOutputGeneOrder), 30), dtype=float),
-                                     index=listOutputGeneOrder)
-        for iGene in range(len(listOutputGeneOrder)):
-            if isinstance(listOfListsMatchedChIP[iGene], pd.DataFrame):
-                numPeaks = len(listOfListsMatchedChIP[iGene])
-                numWidthPerPeak = 30/numPeaks
-                for iPeak in range(numPeaks):
-                    dfChIPForDisp.iloc[iGene,np.int(iPeak*numWidthPerPeak):np.int((iPeak+1)*numWidthPerPeak)] = \
-                        listOfListsMatchedChIP[iGene]['Peak Score'].iloc[iPeak]
-            else:
-                dfChIPForDisp.iloc[iGene, :] = np.nan
-
-            listDNAMeColsOut = ['logFC', 'adj.P.Val', 'UCSC_RefGene_Name', 'UCSC_RefGene_Group']
-            listOfListsMatchedDNAMe = []
-            numMaxPeak = 0
-            for strGene in listOutputGeneOrder:
-                if dictENSGToHGNC[strGene] == dictENSGToHGNC[strGene]:
-                    strHGNC = dictENSGToHGNC[strGene]
-                    if strHGNC in dfLocalDNAMe['UCSC_RefGene_Name'].values.tolist():
-                        sliceDNAMeForGene = dfLocalDNAMe[dfLocalDNAMe['UCSC_RefGene_Name'] == strHGNC]
-                        listOfListsMatchedDNAMe.append(sliceDNAMeForGene[listDNAMeColsOut].copy(deep=True))
-                    else:
-                        listOfListsMatchedDNAMe.append([np.nan])
-                else:
-                    listOfListsMatchedDNAMe.append([np.nan])
-
-
-        listDNAMeGroupOrders = ['TSS200', 'TSS1500', '5\'UTR', '1stExon', 'Body', 'ExonBnd', '3\'UTR']
-        # listMatchedDNAMeLen = [len(listOfListsMatchedDNAMe[i]) for i in range(len(listOfListsMatchedDNAMe))]
-        # set(listMatchedDNAMeLen)
-        # Out[5]: {1, 2, 3, 5, 6}
-        # ---> 30 min common product
-        dfDNAMeForDisp = pd.DataFrame(data=np.zeros((len(listOutputGeneOrder), 500), dtype=float),
-                                      index=listOutputGeneOrder)
-        listProbeTypeFreq = []
-        for iGene in range(len(listOutputGeneOrder)):
-            if isinstance(listOfListsMatchedDNAMe[iGene], pd.DataFrame):
-                dfForGene = listOfListsMatchedDNAMe[iGene]
-                numProbes = np.shape(dfForGene)[0]
-                numWidthPerPeak = 500 / numProbes
-                listProbeOrder = []
-                listProbeTypeFreqs = []
-                for strGroup in listDNAMeGroupOrders:
-                    listProbesFromGroup = dfForGene[dfForGene['UCSC_RefGene_Group']==strGroup].index.tolist()
-                    listProbeOrder += listProbesFromGroup
-                    listProbeTypeFreqs.append(len(listProbesFromGroup))
-                listProbeTypeFreq.append(listProbeTypeFreqs)
-
-                for iProbe in range(len(listProbeOrder)):
-                    strProbe = listProbeOrder[iProbe]
-                    dfDNAMeForDisp.iloc[iGene, np.int(iProbe*numWidthPerPeak):np.int((iProbe+1)*numWidthPerPeak)]=dfForGene['logFC'].loc[strProbe]
-            else:
-                dfDNAMeForDisp.iloc[iGene, :] = np.nan
-                listProbeTypeFreq.append([0]*len(listDNAMeGroupOrders))
-
-
-        dfATACSeqForDisp = pd.DataFrame(data=np.zeros((len(listOutputGeneOrder), 1),
-                                                      dtype=float),
-                                        index=listOutputGeneOrder)
-        for iOutGene in range(len(listOutputGeneOrder)):
-            strGene = listOutputGeneOrder[iOutGene]
-            arrayGeneMatch = dfATACSeq['ENSG'].str.match(strGene)
-            for iMatch in range(len(arrayGeneMatch)):
-                if not arrayGeneMatch[iMatch] == arrayGeneMatch[iMatch]:
-                    arrayGeneMatch[iMatch] = False
-
-            arrayATACSeqIndex = np.where(arrayGeneMatch)[0]
-
-            if len(arrayATACSeqIndex) == 1:
-                dfATACSeqForDisp.loc[strGene] = np.log2(dfATACSeq['No_gRNA_count'].iloc[arrayATACSeqIndex[0]] -
-                                                        dfATACSeq['All_gRNA_count'].iloc[arrayATACSeqIndex[0]])
-            elif len(arrayATACSeqIndex) > 1:
-                a=1
-            else:
-                dfATACSeqForDisp.loc[strGene] = np.nan
-
-        handFig = plt.figure(figsize=tupleFigSize)
-
-        # # # # # #       #       #       #       #       #       #       #
-        # Volcano plots
-
-        handAxMDAMB231 = handFig.add_axes(dictPanelLoc['Volcano:MDA-MB-231'])
-        handAxSUM159 = handFig.add_axes(dictPanelLoc['Volcano:SUM159'])
-
-        _ = PlotFunc.epi_mes_volcano(handAxInMDAMB231=handAxMDAMB231,
-                                     handAxInSUM159=handAxSUM159)
-
-        # # # # # #       #       #       #       #       #       #       #
-        # RNA-seq logFC
-
-        handAx = handFig.add_axes(dictPanelLoc['HeatMap:RNA-seq'])
-
-        numMaxAbsFC = np.max(np.abs(
-            np.ravel(dfMergedRNA[listFCOutCols].reindex(listOutputGeneOrder).values.astype(float))))
-        handRNASeqHM = handAx.matshow(dfMergedRNA[listFCOutCols].reindex(listOutputGeneOrder),
-                       vmin=-numMaxAbsFC, vmax=numMaxAbsFC,
-                       cmap=plt.cm.PRGn, aspect='auto')
-
-        handAx.set_xticks([])
-        handAx.set_yticks([])
-        for iGene in range(len(listOutputGeneOrder)):
-            strENSG = listOutputGeneOrder[iGene]
-            if dictENSGToHGNC[strENSG] == dictENSGToHGNC[strENSG]:
-                strGeneOut = dictENSGToHGNC[strENSG]
-            else:
-                strGeneOut = strENSG
-
-            handAx.text(-0.7, iGene,
-                        strGeneOut,
-                        ha='right', va='center',
-                        fontsize=Plot.numFontSize*0.65,
-                        fontstyle='italic')
-
-            if iGene < len(listOutputGeneOrder)-1:
-                handAx.axhline(y=iGene+0.5,
-                               xmin=0.0, xmax=1.0,
-                               color='0.5', lw=0.25)
-
-        for iCond in range(len(listFCOutCols)):
-            handAx.text(iCond-0.2, -0.5,
-                        dictOutRNASeqCond[listFCOutCols[iCond]],
-                        ha='left', va='bottom',
-                        fontsize=Plot.numFontSize*0.7,
-                        rotation=70)
-
-            if iCond < len(listFCOutCols)-1:
-                handAx.axvline(x=iCond+0.5,
-                               ymin=0.0, ymax=1.0,
-                               color='0.5', lw=0.25)
-
-
-        for strAxLoc in ['bottom', 'left', 'right', 'top']:
-            handAx.spines[strAxLoc].set_linewidth(0.1)
-
-        handCBarAx = handFig.add_axes(dictPanelLoc['HeatMap_cmap:RNA-seq'])
-        handSigColorBar = handFig.colorbar(handRNASeqHM, cax=handCBarAx,
-                                           orientation='horizontal')
-        handSigColorBar.ax.tick_params(labelsize=Plot.numFontSize * 0.8)
-
-        arrayTickLoc = plt.MaxNLocator(3)
-        handSigColorBar.locator = arrayTickLoc
-        handSigColorBar.update_ticks()
-
-        for strAxLoc in ['bottom', 'left', 'right', 'top']:
-            handCBarAx.spines[strAxLoc].set_linewidth(0.1)
-
-        structAxPos = handCBarAx.get_position()
-        handFig.text(structAxPos.x0+0.5*structAxPos.width,
-                     numHeatMapPanelXLabelPos, 'RNA-seq log$_{2}$FC',
-                     ha='center', va='bottom',
-                     fontsize=Plot.numFontSize*0.7)
-
-        #       #       #       #       #       #       #       #       #
-        # DNAme
-        handAx = handFig.add_axes(dictPanelLoc['HeatMap:DNAme'])
-
-        arrayColorNorm = matplotlib.colors.Normalize(vmin=0,
-                                                     vmax=9)
-        arrayColorsForMap = matplotlib.cm.ScalarMappable(norm=arrayColorNorm,
-                                                         cmap=matplotlib.cm.tab10)
-
-
-        CMapDNAme = copy.copy(matplotlib.cm.BrBG)
-        CMapDNAme.set_bad('0.5', 1.)
-        numMaxAbsFC = np.max(np.abs(
-            np.ravel(np.nan_to_num(dfDNAMeForDisp.values.astype(float)))))
-        handDNAmeHM = handAx.imshow(dfDNAMeForDisp.values.astype(float),
-                       vmin=-numMaxAbsFC, vmax=numMaxAbsFC,
-                       cmap=CMapDNAme, aspect='auto')
-
-        handAx.set_xticks([])
-        handAx.set_yticks([])
-
-        for strAxLoc in ['bottom', 'left', 'right', 'top']:
-            handAx.spines[strAxLoc].set_linewidth(0.1)
-
-        numRelGeneHeight = 1.0/len(listOutputGeneOrder)
-        for iGene in range(len(listOutputGeneOrder)):
-            if iGene < len(listOutputGeneOrder)-1:
-                handAx.axhline(y=iGene+0.5,
-                               xmin=0.0, xmax=1.0,
-                               color='0.5', lw=1.5)
-
-            numProbesForGene = np.sum(listProbeTypeFreq[iGene])
-            if numProbesForGene > 0:
-                numProbeHMWidth = 500./numProbesForGene
-                for iProbe in range(numProbesForGene):
-                    handAx.axvline(x=numProbeHMWidth*iProbe,
-                                   ymin=1.0-((iGene+1)*numRelGeneHeight),
-                                   ymax=1.0-(iGene*numRelGeneHeight),
-                                   color='0.5', lw=0.25)
-
-            numTotalProbes = np.sum(listProbeTypeFreq[iGene])
-
-            if numTotalProbes > 0:
-                numWidthPerProbe = 1.0 / numTotalProbes
-                numProbeOutCount = 0
-                for iProbeGroup in range(len(listProbeTypeFreq[iGene])):
-                    if listProbeTypeFreq[iGene][iProbeGroup] > 0:
-                        numProbesForType = listProbeTypeFreq[iGene][iProbeGroup]
-                        if numProbeOutCount == 0:
-                            handAx.axhline(y=iGene-0.33,
-                                           xmin=0.0,
-                                           xmax=((numProbeOutCount+numProbesForType)*numWidthPerProbe),
-                                           color=arrayColorsForMap.to_rgba(iProbeGroup), lw=1.0,
-                                           zorder=10)
-                            numProbeOutCount += numProbesForType
-                        else:
-                            handAx.axhline(y=iGene-0.33,
-                                           xmin=(numProbeOutCount*numWidthPerProbe)+0.01,
-                                           xmax=((numProbeOutCount+numProbesForType)*numWidthPerProbe),
-                                           color=arrayColorsForMap.to_rgba(iProbeGroup), lw=1.0,
-                                           zorder=10)
-                            numProbeOutCount += numProbesForType
-
-
-
-
-        handCBarAx = handFig.add_axes(dictPanelLoc['HeatMap_cmap:DNAme_type'])
-        arrayTypeForDisp = np.zeros((1, len(listDNAMeGroupOrders)), dtype=float)
-        arrayTypeForDisp[0,:] = np.arange(len(listDNAMeGroupOrders), dtype=float)
-        handCBarAx.matshow(arrayTypeForDisp,
-                           cmap=plt.cm.tab10,
-                           vmin=0,
-                           vmax=9,
-                           aspect='auto')
-        handCBarAx.set_xticks([])
-        handCBarAx.set_yticks([])
-
-        for strAxLoc in ['bottom', 'left', 'right', 'top']:
-            handCBarAx.spines[strAxLoc].set_linewidth(0.1)
-
-        structAxPos = handCBarAx.get_position()
-        for iType in range(len(listDNAMeGroupOrders)):
-            handFig.text(structAxPos.x0+((iType+0.25)/len(listDNAMeGroupOrders))*structAxPos.width,
-                         structAxPos.y0 + 1.5*structAxPos.height,
-                         listDNAMeGroupOrders[iType],
-                         ha='left', va='bottom',
-                         rotation=90,
-                         fontsize=Plot.numFontSize*0.5)
-
-        handCBarAx = handFig.add_axes(dictPanelLoc['HeatMap_cmap:DNAme'])
-        handSigColorBar = handFig.colorbar(handDNAmeHM, cax=handCBarAx,
-                                           orientation='horizontal')
-        handSigColorBar.ax.tick_params(labelsize=Plot.numFontSize * 0.8)
-
-        arrayTickLoc = plt.MaxNLocator(3)
-        handSigColorBar.locator = arrayTickLoc
-        handSigColorBar.update_ticks()
-
-        for strAxLoc in ['bottom', 'left', 'right', 'top']:
-            handCBarAx.spines[strAxLoc].set_linewidth(0.1)
-
-        structAxPos = handCBarAx.get_position()
-        handFig.text(structAxPos.x0+0.5*structAxPos.width,
-                     numHeatMapPanelXLabelPos, 'DNAme log$_{2}$FC',
-                     ha='center', va='bottom',
-                     fontsize=Plot.numFontSize*0.7)
-
-        # # # # # #       #       #       #       #       #       #       #
-        # ATAC-seq
-        handAx = handFig.add_axes(dictPanelLoc['HeatMap:ATAC-seq'])
-
-        numMaxPeak = np.max(np.nan_to_num(np.ravel(dfATACSeqForDisp.values.astype(float))))
-        handATACseq = handAx.matshow(dfATACSeqForDisp.values.astype(float),
-                       vmin=0, vmax=numMaxPeak,
-                       cmap=plt.cm.plasma, aspect='auto')
-
-        handAx.set_xticks([])
-        handAx.set_yticks([])
-
-        handCBarAx = handFig.add_axes(dictPanelLoc['HeatMap_cmap:ATAC-seq'])
-        handSigColorBar = handFig.colorbar(handATACseq, cax=handCBarAx,
-                                           orientation='horizontal')
-        handSigColorBar.ax.tick_params(labelsize=Plot.numFontSize * 0.8)
-
-        arrayTickLoc = plt.MaxNLocator(3)
-        handSigColorBar.locator = arrayTickLoc
-        handSigColorBar.update_ticks()
-
-        for strAxLoc in ['bottom', 'left', 'right', 'top']:
-            handCBarAx.spines[strAxLoc].set_linewidth(0.1)
-
-        structAxPos = handCBarAx.get_position()
-        handFig.text(structAxPos.x0+0.5*structAxPos.width,
-                     numHeatMapPanelXLabelPos, 'ATAC-seq\n'+r'log$_{2}$(${\Delta}$reads)',
-                     ha='center', va='bottom',
-                     fontsize=Plot.numFontSize*0.7)
-
-        # # # # # #       #       #       #       #       #       #       #
-        # ChIP-seq
-        handAx = handFig.add_axes(dictPanelLoc['HeatMap:ChIP-seq'])
-
-        numMaxPeak = np.max(np.nan_to_num(np.ravel(dfChIPForDisp.values.astype(float))))
-        handChIPSeq = handAx.matshow(np.log2(dfChIPForDisp.values.astype(float)+1),
-                       vmin=0, vmax=np.log2(numMaxPeak+1),
-                       cmap=plt.cm.plasma, aspect='auto')
-
-        handAx.set_xticks([])
-        handAx.set_yticks([])
-
-        handCBarAx = handFig.add_axes(dictPanelLoc['HeatMap_cmap:ChIP-seq'])
-        handSigColorBar = handFig.colorbar(handChIPSeq, cax=handCBarAx,
-                                           orientation='horizontal')
-        handSigColorBar.ax.tick_params(labelsize=Plot.numFontSize * 0.8)
-
-        arrayTickLoc = plt.MaxNLocator(3)
-        handSigColorBar.locator = arrayTickLoc
-        handSigColorBar.update_ticks()
-
-        for strAxLoc in ['bottom', 'left', 'right', 'top']:
-            handCBarAx.spines[strAxLoc].set_linewidth(0.1)
-
-        structAxPos = handCBarAx.get_position()
-        handFig.text(structAxPos.x0+0.5*structAxPos.width,
-                     numHeatMapPanelXLabelPos, 'x $et al.$ ChIP-seq\n'+r'?log$_{2}$(${\Delta}$reads)?',
-                     ha='center', va='bottom',
-                     fontsize=Plot.numFontSize*0.7)
-
-        # # # # # # # # #       #       #       #       #       #       #
-        # Hexbin landscape
-        handAx = handFig.add_axes(dictPanelLoc['Hexbin_Landscape'])
-
-        _ = PlotFunc.es_ms_landscape(handAxIn=handAx,
-                                     handFigIn=handFig)
-
-        # # # # # # # # #       #       #       #       #       #       #
-        # Histograms
-        listOutGenes = ['ZEB1', 'ESRP1',
-                        'F11R', 'MAP7',
-                        'CDS1', 'SH2D3A']
-        numOutGeneRow = 0
-        numOutGeneCol = 0
-        for iGene in range(len(listOutGenes)):
-            strOutGene = listOutGenes[iGene]
-            handAx = plt.subplot(arrayGridSpec[numOutGeneRow, numOutGeneCol])
-            if numOutGeneCol == 0:
-                flagLabelY = True
-            else:
-                flagLabelY = False
-            if numOutGeneRow == 2:
-                flagLabelX = True
-            else:
-                flagLabelX = False
-
-            _ = PlotFunc.tcga_sel_gene_hist(handAxIn=handAx,
-                                            strGeneIn=strOutGene,
-                                            flagLabelYAxis=flagLabelY,
-                                            flagLabelXAxis=flagLabelX)
-            numOutGeneCol += 1
-            if numOutGeneCol >= 2:
-                numOutGeneRow += 1
-                numOutGeneCol=0
-
-
-        for strFormat in Plot.listFileFormats:
-            handFig.savefig(os.path.join(Plot.strOutputLoc, 'Figure6.'+strFormat),
                             ext=strFormat, dpi=300)
         plt.close(handFig)
 
@@ -2492,6 +1820,51 @@ class Plot:
 
         return flagResult
 
+
+
+        # dfGeneOntology = GeneOntology.Map.all_transcripts_with_traversal()
+        #
+        # listLogFCCols = [strCol + ':log2FoldChange' for strCol in listDiffExprCondsToShow]
+        # listPValCols = [strCol + ':padj' for strCol in listDiffExprCondsToShow]
+        #
+        # listGenesForDispENSG = [dictHGNCToENSG[strGene] for strGene in listGenesForDisp]
+        #
+        # listOfDfGOEnrich = GeneOntology.EnrichmentTest.calc_relative_enrichment(
+        #     listOfListsMessRNAsToCheck=[listGenesForDisp],
+        #     listAllDataMessRNAs=listAllGenesHGNC,
+        #     stringListFormat='HGNC',
+        #     numMinGenesInCategory=3,
+        #     numMaxGenesInCategory=500)
+        #
+        # dfSigUpDiffExprGO = \
+        #     listOfDfGOEnrich[0][
+        #         np.bitwise_and(listOfDfGOEnrich[0]['GOEnrichPVal'] < 1E-3,
+        #                        listOfDfGOEnrich[0]['GOObsNum'] > 2)].copy(deep=True)
+        #
+        # arrayGOCatRankedByEnrich = np.argsort(dfSigUpDiffExprGO['GOEnrichPVal'].values.astype(float))
+        #
+        # listGOCatsEnriched = [dfSigUpDiffExprGO.index.tolist()[i] for i in arrayGOCatRankedByEnrich]
+        #
+        # if len(listGOCatsEnriched) > 25:
+        #     listGOCatsForDisp = [listGOCatsEnriched[i] for i in range(25)]
+        # else:
+        #     listGOCatsForDisp = listGOCatsEnriched
+        #
+        # dfGOCatMembership = pd.DataFrame(data=np.zeros((len(listGenesForDisp), len(listGOCatsForDisp)),
+        #                                                dtype=float),
+        #                                  index=listGenesForDisp,
+        #                                  columns=listGOCatsForDisp)
+        #
+        # for strCat in listGOCatsForDisp:
+        #     listGenesInThisGOCat = []
+        #     if strCat in dfGeneOntology.columns.tolist():
+        #         listGenesInThisGOCat = [dfGeneOntology.index.tolist()[i] for i in
+        #                                 np.where(dfGeneOntology[strCat])[0]]
+        #         listMatchedGenesInThisCat = list(set(listGenesInThisGOCat).intersection(set(listGenesForDisp)))
+        #     dfGOCatMembership[strCat].loc[listMatchedGenesInThisCat] = 1.0
+
+
+
 # dfDiffExpr = Process.diff_expr_data()
 # listCommonGenes = Process.common_rna_genes()
 
@@ -2505,6 +1878,7 @@ class Plot:
 
 # dfLocalScores = Process.local_scores()
 
+_ = Process.go_rnaseq_diffexpr_genes()
 
 _ = Plot.figure_five()
 # _ = Plot.figure_six()
@@ -2541,3 +1915,6 @@ _ = Plot.figure_five()
 
 
 # dfTCGA = TCGAFunctions.PanCancer.extract_mess_rna()
+
+
+
