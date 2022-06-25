@@ -245,7 +245,7 @@ class Process:
                     flagPerformExtraction=False,
                     dfIn=pd.DataFrame()):
 
-        strTempFileName = 'CCLE-BRCA-EpiMesScores.pickle'
+        strTempFileName = 'CCLE-BRCA-EpiMesScores.tsv'
         pathOut = os.path.join(PathDir.pathOutFolder, 'figure_5')
 
         if not os.path.exists(os.path.join(pathOut, strTempFileName)):
@@ -253,28 +253,28 @@ class Process:
 
         if flagPerformExtraction:
 
-            listTCGAGenes = dfIn.index.tolist()
-            listTCGASamples = dfIn.columns.tolist()
-            numSamples = len(listTCGASamples)
+            listCCLEGenes = dfIn.index.tolist()
+            listCellLines = dfIn.columns.tolist()
+            numSamples = len(listCellLines)
 
             dictEpiMesCellLine = Process.tan2012_cell_line_genes()
             listEpiCellLineGenes = dictEpiMesCellLine['epi_genes']
             listMesCellLineGenes = dictEpiMesCellLine['mes_genes']
 
             # create lists of the cell line/tissue epithelial/mesenchymal gene lists for scoring
-            listOutputEpiCellLineGenesMatched = [strGene for strGene in listTCGAGenes
+            listOutputEpiCellLineGenesMatched = [strGene for strGene in listCCLEGenes
                                                if strGene.split(' (')[0] in listEpiCellLineGenes]
-            listOutputMesCellLineGenesMatched = [strGene for strGene in listTCGAGenes
+            listOutputMesCellLineGenesMatched = [strGene for strGene in listCCLEGenes
                                                if strGene.split(' (')[0] in listMesCellLineGenes]
 
             dfScoresOut = pd.DataFrame(
                 {'Epithelial Score':np.zeros(numSamples, dtype=float),
                  'Mesenchymal Score':np.zeros(numSamples, dtype=float)},
-                index=listTCGASamples)
+                index=listCellLines)
 
             for iSample in range(numSamples):
-                print('Patient ' + '{}'.format(iSample))
-                strSample = listTCGASamples[iSample]
+                print('Cell line ' + '{}'.format(iSample))
+                strSample = listCellLines[iSample]
                 dfScore = score(up_gene=listOutputEpiCellLineGenesMatched,
                                 sample=dfIn[[strSample]])
                 dfScoresOut.loc[strSample,'Epithelial Score'] = \
@@ -296,116 +296,117 @@ class Process:
         return dfScoresOut
 
     def local_scores(flagResult=False,
-                    flagPerformExtraction=False):
+                    flagPerformExtraction=False,
+                     dfIn=pd.DataFrame()):
 
-        strTempFileName = 'LocalData-EpiMesScores.pickle'
+        strTempFileName = 'LocalData-EpiMesScores.tsv'
+        pathOut = os.path.join(PathDir.pathOutFolder, 'figure_5')
 
-        if not os.path.exists(os.path.join(PathDir.pathProcResults, strTempFileName)):
+        if not os.path.exists(os.path.join(pathOut, strTempFileName)):
             flagPerformExtraction = True
 
         if flagPerformExtraction:
 
+            listGenes = dfIn.index.tolist()
+            listConditions = dfIn.columns.tolist()
+            numSamples = len(listConditions)
+
             dictENSGToHGNC = Process.dict_gtf_ensg_to_hgnc()
             dictHGNCToENSG = dict(zip(dictENSGToHGNC.values(), dictENSGToHGNC.keys()))
 
-            listSharedGenes = Process.common_rna_genes()
-            listSharedGenesENSG = [dictHGNCToENSG[strGene] for strGene in listSharedGenes]
-
-            dfAbund = Process.quant_data()
-            dfAbund = dfAbund.reindex(listSharedGenesENSG)
-
-            arrayRowHasNaN = np.any(dfAbund.isnull().values.astype(bool), axis=1)
-            listRowHasNaN = [dfAbund.index.tolist()[i] for i in np.where(arrayRowHasNaN)[0]]
-            dfAbund.drop(index=listRowHasNaN, inplace=True)
-
-            listDataGenes = dfAbund.index.tolist()
-            for strGene in set(listDataGenes).difference(set(dictENSGToHGNC.keys())):
-                dictENSGToHGNC[strGene] = strGene
-            listDataGenesHGNC = [dictENSGToHGNC[strGene] for strGene in listDataGenes]
-            dfAbund.index = listDataGenesHGNC
-            listDataSamples = dfAbund.columns.tolist()
-            numSamples = len(listDataSamples)
-
-
-            setOutGenes = set(listSharedGenes)
-
-            listDataOutGenes = [strGene for strGene in listDataGenesHGNC if strGene in setOutGenes]
-
             dictEpiMesCellLine = Process.tan2012_cell_line_genes()
             listEpiCellLineGenes = dictEpiMesCellLine['epi_genes']
+            listEpiCellLineGenesENSG = [dictHGNCToENSG[strGene] for strGene in listEpiCellLineGenes]
             listMesCellLineGenes = dictEpiMesCellLine['mes_genes']
+            listMesCellLineGenesENSG = [dictHGNCToENSG[strGene] for strGene in listMesCellLineGenes]
 
             # create lists of the cell line/tissue epithelial/mesenchymal gene lists for scoring
-            listOutputEpiCellLineGenes = list(set(listEpiCellLineGenes).intersection(setOutGenes))
-            listOutputMesCellLineGenes = list(set(listMesCellLineGenes).intersection(setOutGenes))
+            listOutputEpiCellLineGenesMatched = list(set(listGenes).intersection(listEpiCellLineGenesENSG))
+            listOutputMesCellLineGenesMatched = list(set(listGenes).intersection(listMesCellLineGenesENSG))
 
+            dfScoresOut = pd.DataFrame(
+                {'Epithelial Score':np.zeros(numSamples, dtype=float),
+                 'Mesenchymal Score':np.zeros(numSamples, dtype=float)},
+                index=listConditions)
 
-            listOutputEpiCellLineGenesMatched = [strGene for strGene in listDataOutGenes
-                                               if strGene in listOutputEpiCellLineGenes]
-            listOutputMesCellLineGenesMatched = [strGene for strGene in listDataOutGenes
-                                               if strGene in listOutputMesCellLineGenes]
+            for iSample in range(numSamples):
+                print('Cell line ' + '{}'.format(iSample))
+                strSample = listConditions[iSample]
+                dfScore = score(up_gene=listOutputEpiCellLineGenesMatched,
+                                sample=dfIn[[strSample]])
+                dfScoresOut.loc[strSample,'Epithelial Score'] = \
+                    dfScore['total_score'].values.astype(float)[0]
 
-            arrayCCLEEpiScores = np.zeros(numSamples, dtype=float)
-            arrayCCLEMesScores = np.zeros(numSamples, dtype=float)
-            for iCellLine in range(numSamples):
-                print('Cell Line ' + '{}'.format(iCellLine))
-                strSample = listDataSamples[iCellLine]
-                arrayCCLEEpiScores[iCellLine] = \
-                    GeneSetScoring.FromInput.single_sample_rank_score(
-                        listAllGenes=listDataOutGenes,
-                        arrayTranscriptAbundance=dfAbund[strSample].reindex(listDataOutGenes).values.astype(float),
-                        listUpGenesToScore=listOutputEpiCellLineGenesMatched,
-                        flagApplyNorm=True)
-                arrayCCLEMesScores[iCellLine] = \
-                    GeneSetScoring.FromInput.single_sample_rank_score(
-                        listAllGenes=listDataOutGenes,
-                        arrayTranscriptAbundance=dfAbund[strSample].reindex(listDataOutGenes).values.astype(float),
-                        listUpGenesToScore=listOutputMesCellLineGenesMatched,
-                        flagApplyNorm=True)
+                dfScore = score(up_gene=listOutputMesCellLineGenesMatched,
+                                sample=dfIn[[strSample]])
+                dfScoresOut.loc[strSample,'Mesenchymal Score'] = \
+                    dfScore['total_score'].values.astype(float)[0]
 
-            dfScores = pd.DataFrame({'Epithelial Score':arrayCCLEEpiScores,
-                                     'Mesenchymal Score':arrayCCLEMesScores},
-                                    index=listDataSamples)
-            dfScores.to_pickle(os.path.join(PathDir.pathProcResults, strTempFileName))
+            dfScoresOut.to_csv(os.path.join(pathOut, strTempFileName),
+                               sep='\t')
 
         else:
 
-            dfScores = pd.read_pickle(os.path.join(PathDir.pathProcResults, strTempFileName))
+            dfScoresOut = pd.read_table(os.path.join(pathOut, strTempFileName),
+                                        sep='\t', index_col=0, header=0)
 
-        return dfScores
+        return dfScoresOut
 
-    def all_epi_mes_scores(flagResult=False):
+    def all_epi_mes_scores(flagResult=False,
+                           flagPerformExtraction=False):
 
         dictENSGToHGNC = Process.dict_gtf_ensg_to_hgnc()
         dictHGNCToENSG = dict(zip(dictENSGToHGNC.values(), dictENSGToHGNC.keys()))
 
-        dfLocalData = Process.quant_data()
-        listLocalGenesENSG = dfLocalData.index.tolist()
-        setLocalGenesENSG = set(listLocalGenesENSG)
+        pathOut = os.path.join(PathDir.pathOutFolder, 'figure_5')
+        flagScoreTCGA = False
+        if not os.path.exists(os.path.join(pathOut, 'TCGA-BRCA-EpiMesScores.tsv')):
+            flagScoreTCGA = True
+        flagScoreCCLE = False
+        if not os.path.exists(os.path.join(pathOut, 'CCLE-BRCA-EpiMesScores.tsv')):
+            flagScoreCCLE = True
+        flagScoreLocalData = False
+        if not os.path.exists(os.path.join(pathOut, 'LocalData-EpiMesScores.tsv')):
+            flagScoreLocalData = True
 
-        dfTCGA = Process.tcga_brca()
-        listTCGAGenes = dfTCGA.index.tolist()
-        listTCGAGenesHGNC = [strGene.split('|')[0] for strGene in listTCGAGenes]
-        for strGene in list(set(listTCGAGenesHGNC).difference(set(dictHGNCToENSG.keys()))):
-            dictHGNCToENSG[strGene] = 'failed_map|'+strGene
-        listTCGAGenesENSG = [dictHGNCToENSG[strGene] for strGene in listTCGAGenesHGNC]
-        setTCGAGenesENSG = set(listTCGAGenesENSG)
+        if np.any([flagScoreTCGA, flagScoreCCLE, flagScoreLocalData]):
+            flagPerformExtraction=True
 
-        dfCCLE = Process.ccle_brca()
-        listCCLEGenes = dfCCLE.columns.tolist()
-        listCCLEGenesHGNC = [strGene.split(' (')[0] for strGene in listCCLEGenes]
-        listCCLEGenesENSG = [dictHGNCToENSG[strGene] for strGene in listCCLEGenesHGNC]
-        setCCLEGenesENSG = set(listCCLEGenesENSG)
+        if flagPerformExtraction:
+            dfLocalData = Process.quant_data()
+            listLocalGenesENSG = dfLocalData.index.tolist()
+            setLocalGenesENSG = set(listLocalGenesENSG)
 
-        listCommonGenesENSG = list(setCCLEGenesENSG.intersection(setLocalGenesENSG.intersection(setTCGAGenesENSG)))
-        listCommonGenesHGNC = [dictENSGToHGNC[strGene] for strGene in listCommonGenesENSG]
+            dfTCGA = Process.tcga_brca()
+            listTCGAGenes = dfTCGA.index.tolist()
+            listTCGAGenesHGNC = [strGene.split('|')[0] for strGene in listTCGAGenes]
+            for strGene in list(set(listTCGAGenesHGNC).difference(set(dictHGNCToENSG.keys()))):
+                dictHGNCToENSG[strGene] = 'failed_map|'+strGene
+            listTCGAGenesENSG = [dictHGNCToENSG[strGene] for strGene in listTCGAGenesHGNC]
+            setTCGAGenesENSG = set(listTCGAGenesENSG)
 
-        listTCGAGenesOut = [strGene for strGene in listTCGAGenes if strGene.split('|')[0] in listCommonGenesHGNC]
-        listCCLEGenesOut = [strGene for strGene in listCCLEGenes if strGene.split(' (')[0] in listCommonGenesHGNC]
+            dfCCLE = Process.ccle_brca()
+            listCCLEGenes = dfCCLE.columns.tolist()
+            listCCLEGenesHGNC = [strGene.split(' (')[0] for strGene in listCCLEGenes]
+            listCCLEGenesENSG = [dictHGNCToENSG[strGene] for strGene in listCCLEGenesHGNC]
+            setCCLEGenesENSG = set(listCCLEGenesENSG)
 
-        dfTCGAScores = Process.tcga_scores(dfIn=dfTCGA.reindex(listTCGAGenesOut))
-        dfCCLEScores = Process.ccle_scores(dfIn=dfCCLE[listCCLEGenesOut].transpose())
-        dfLocalScores = Process.local_scores()
+            listCommonGenesENSG = list(setCCLEGenesENSG.intersection(setLocalGenesENSG.intersection(setTCGAGenesENSG)))
+            listCommonGenesHGNC = [dictENSGToHGNC[strGene] for strGene in listCommonGenesENSG]
+
+            listTCGAGenesOut = [strGene for strGene in listTCGAGenes if strGene.split('|')[0] in listCommonGenesHGNC]
+            listCCLEGenesOut = [strGene for strGene in listCCLEGenes if strGene.split(' (')[0] in listCommonGenesHGNC]
+            listLocalDataGenesOut = list(set(listLocalGenesENSG).intersection(listCommonGenesENSG))
+
+            dfTCGAScores = Process.tcga_scores(dfIn=dfTCGA.reindex(listTCGAGenesOut))
+            dfCCLEScores = Process.ccle_scores(dfIn=dfCCLE[listCCLEGenesOut].transpose())
+            dfLocalScores = Process.local_scores(dfIn=dfLocalData.reindex(listLocalDataGenesOut))
+
+        else:
+
+            dfTCGAScores = Process.tcga_scores()
+            dfCCLEScores = Process.ccle_scores()
+            dfLocalScores = Process.local_scores()
 
         return {'TCGA':dfTCGAScores,
                 'CCLE':dfCCLEScores,
@@ -413,17 +414,17 @@ class Process:
 
     def ccle_brca_subtypes(flagResult=False):
 
-        dfMeta = DepMapTools.Load.cell_line_metadata()
-        dfMeta.set_index('CCLE_Name', inplace=True)
+        dfMeta = pd.read_table(os.path.join(PathDir.pathPublicData, 'sample_info.csv'),
+                               sep=',', header=0, index_col=0)
+        listBreastLinesACH = dfMeta[dfMeta['primary_disease']=='Breast Cancer'].index.tolist()
+        listBreastLinesCCLE = dfMeta['CCLE_Name'].reindex(listBreastLinesACH).values.tolist()
+        listSubtype = dfMeta['lineage_molecular_subtype'].reindex(listBreastLinesACH).values.tolist()
 
-        listBrCaLines = [strLine for strLine in dfMeta.index.tolist() if '_BREAST' in strLine]
-        listSubtype = dfMeta['lineage_molecular_subtype'].reindex(listBrCaLines).values.tolist()
-
-        for iLine in range(len(listBrCaLines)):
+        for iLine in range(len(listBreastLinesACH)):
             if not listSubtype[iLine] == listSubtype[iLine]:
                 listSubtype[iLine] = 'unknown'
 
-        return dict(zip(listBrCaLines, listSubtype))
+        return dict(zip(listBreastLinesCCLE, listSubtype))
 
     def fig5_rnaseq_gene_lists(flagResult=False):
         # select a subset of genes from the RNA-seq DE analyses for display in Fig. 5b
@@ -950,8 +951,7 @@ class PlotFunc:
 
     def es_ms_landscape(
             flagResult=False,
-            handAxIn='undefined',
-            handFigIn='undefined'):
+            handAxIn='undefined'):
 
         listOfListsCellLineSubtypes = [['luminal'],
                                        ['HER2_amp', 'luminal_HER2_amp'],
@@ -973,9 +973,9 @@ class PlotFunc:
         numCellLineSubtypes = len(listCellLineSubtypesToDisp)
 
         listSamplesToPlot = ['SUM159_EVC',
-                             'SUM159_gRNA_All',
-                             'MDA231_EVC',
-                             'MDA231_gRNA_All']
+                             'SUM159_gAll',
+                             'MDAMB231_EVC',
+                             'MDAMB231_gAll']
 
         numMaxXTicks = 5
         numMaxYTicks = 5
@@ -986,21 +986,25 @@ class PlotFunc:
         numScatterZOrder = 11
 
         dictLineLabel = {'SUM159':'SUM159',
-                         'MDA231':'MDA-MB-231'}
+                         'MDAMB231':'MDA-MB-231'}
         dictCondLabel = {'EVC': 'Empty\nvector',
-                         'gRNA_All': 'ZEB1 gRNAs'}
+                         'gAll': 'All gRNAs'}
 
         dictOfDictOffsets = {'SUM159': {},
-                             'MDA231': {}}
+                             'MDAMB231': {}}
         dictOfDictOffsets['SUM159']['EVC'] = (-0.08, 0.02)
-        dictOfDictOffsets['SUM159']['gRNA_All'] = (-0.03, -0.07)
-        dictOfDictOffsets['MDA231']['EVC'] = (0.04, 0.10)
-        dictOfDictOffsets['MDA231']['gRNA_All'] = (-0.07, -0.07)
+        dictOfDictOffsets['SUM159']['gAll'] = (-0.03, -0.07)
+        dictOfDictOffsets['MDAMB231']['EVC'] = (0.04, 0.10)
+        dictOfDictOffsets['MDAMB231']['gAll'] = (-0.07, -0.07)
 
         dictAllScores = Process.all_epi_mes_scores()
 
         dfTCGAScores = dictAllScores['TCGA']
         dfCCLEScores = dictAllScores['CCLE']
+        arrayCCLELineHasNoScore = np.sum(np.isnan(dfCCLEScores.values.astype(float)), axis=1) > 0
+        listCCLELineNoScore = [dfCCLEScores.index.tolist()[i] for i in np.where(arrayCCLELineHasNoScore)[0]]
+        dfCCLEScores.drop(index=listCCLELineNoScore, inplace=True)
+
         dfLocalScores = dictAllScores['LocalData']
 
         dictBrCaLineToType = Process.ccle_brca_subtypes()
@@ -1056,7 +1060,7 @@ class PlotFunc:
             strSampleSet = listSamplesToPlot[iSampleSet]
 
             listLocalSamplesToPlot = [strSample for strSample in dfLocalScores.index.tolist()
-                                      if strSample.endswith(strSampleSet)]
+                                      if strSampleSet in strSample]
             for strSample in listLocalSamplesToPlot:
                 plt.scatter(dfLocalScores['Epithelial Score'].loc[strSample],
                             dfLocalScores['Mesenchymal Score'].loc[strSample],
@@ -1073,24 +1077,24 @@ class PlotFunc:
             numMeanMesScore = np.mean(
                 dfLocalScores['Mesenchymal Score'].reindex(listLocalSamplesToPlot).values.astype(float))
 
-            handAxIn.annotate(
-                strLine + '\n' + strCond,
-                xy=(numMeanEpiScore, numMeanMesScore), xycoords='data',
-                xytext=(numMeanEpiScore + dictOfDictOffsets[strLineShort][strCondShort][0],
-                        numMeanMesScore + dictOfDictOffsets[strLineShort][strCondShort][1]),
-                textcoords='data',
-                size=Plot.numFontSize*0.7, annotation_clip=False,
-                horizontalalignment='center', verticalalignment='center', zorder=6,
-                bbox=dict(boxstyle="round", fc='w', ec=(0.6, 0.6, 0.6), lw=2, alpha=1.0),
-                arrowprops=dict(arrowstyle="wedge,tail_width=0.6",
-                                fc=(1.0, 1.0, 1.0), ec=(0.6, 0.6, 0.6),
-                                patchA=None,
-                                relpos=(0.5, 0.5),
-                                connectionstyle="arc3", lw=2, alpha=0.7, zorder=6)
-            )
-            handAxIn.set_xlim([numMinScore-0.10, numMaxScore+0.05])
-            handAxIn.set_ylim([numMinScore-0.10, numMaxScore+0.05])
+            # handAxIn.annotate(
+            #     strLine + '\n' + strCond,
+            #     xy=(numMeanEpiScore, numMeanMesScore), xycoords='data',
+            #     xytext=(numMeanEpiScore + dictOfDictOffsets[strLineShort][strCondShort][0],
+            #             numMeanMesScore + dictOfDictOffsets[strLineShort][strCondShort][1]),
+            #     textcoords='data',
+            #     size=Plot.numFontSize*0.7, annotation_clip=False,
+            #     horizontalalignment='center', verticalalignment='center', zorder=6,
+            #     bbox=dict(boxstyle="round", fc='w', ec=(0.6, 0.6, 0.6), lw=2, alpha=1.0),
+            #     arrowprops=dict(arrowstyle="wedge,tail_width=0.6",
+            #                     fc=(1.0, 1.0, 1.0), ec=(0.6, 0.6, 0.6),
+            #                     patchA=None,
+            #                     relpos=(0.5, 0.5),
+            #                     connectionstyle="arc3", lw=2, alpha=0.7, zorder=6)
+            # )
 
+        handAxIn.set_xlim([numMinScore-0.10, numMaxScore+0.05])
+        handAxIn.set_ylim([numMinScore-0.10, numMaxScore+0.05])
 
         handAxIn.set_ylabel('Mesenchymal score', fontsize=Plot.numFontSize*0.7)
         handAxIn.set_xlabel('Epithelial score', fontsize=Plot.numFontSize*0.7)
@@ -1133,74 +1137,74 @@ class PlotFunc:
         numScatterLegendTextXOffset = 0.015
         numScatterLegendTextYOffset = -0.03
 
-        # draw in a patch (white bounding box) as the background for the legend
-        handPatch = handAxIn.add_patch(matplotlib.patches.Rectangle([numLegendPanelXStart, numLegendPanelYStart],
-                                                      numLegendPanelWidth, numLegendPanelHeight,
-                                                      edgecolor='k', lw=1.,
-                                                      facecolor='w', fill=True))
-        handPatch.set_zorder(numScatterZOrder+1)
-        handAxIn.text(numLegendPanelXStart + 0.25*numLegendPanelWidth,
-                    numLegendPanelYStart + 0.40*numLegendPanelHeight,
-                    'log$_{10}$($n_{tumours}$)',
-                    fontsize=Plot.numFontSize*0.7,
-                    ha='center', va='center',
-                    rotation=90, zorder=numScatterZOrder+3)
+        # # draw in a patch (white bounding box) as the background for the legend
+        # handPatch = handAxIn.add_patch(matplotlib.patches.Rectangle([numLegendPanelXStart, numLegendPanelYStart],
+        #                                               numLegendPanelWidth, numLegendPanelHeight,
+        #                                               edgecolor='k', lw=1.,
+        #                                               facecolor='w', fill=True))
+        # handPatch.set_zorder(numScatterZOrder+1)
+        # handAxIn.text(numLegendPanelXStart + 0.25*numLegendPanelWidth,
+        #             numLegendPanelYStart + 0.40*numLegendPanelHeight,
+        #             'log$_{10}$($n_{tumours}$)',
+        #             fontsize=Plot.numFontSize*0.7,
+        #             ha='center', va='center',
+        #             rotation=90, zorder=numScatterZOrder+3)
+        #
+        # arrayCBarPos=handFigIn.add_axes([numColorBarXStart,numColorBarYStart,0.02,0.08])
+        # handSigColorBar = handFigIn.colorbar(handAxHex,cax=arrayCBarPos)
+        # handSigColorBar.ax.tick_params(labelsize=Plot.numFontSize*0.7)
+        #
+        # arrayTickLoc = plt.MaxNLocator(5)
+        # handSigColorBar.locator = arrayTickLoc
+        # handSigColorBar.update_ticks()
+        #
+        # listOutTickLabels = ['']*5
+        # listOutTickLabels[0] = 'Low'
+        # listOutTickLabels[-1] = 'High'
+        #
+        # handSigColorBar.ax.set_yticklabels(listOutTickLabels)
 
-        arrayCBarPos=handFigIn.add_axes([numColorBarXStart,numColorBarYStart,0.02,0.08])
-        handSigColorBar = handFigIn.colorbar(handAxHex,cax=arrayCBarPos)
-        handSigColorBar.ax.tick_params(labelsize=Plot.numFontSize*0.7)
-
-        arrayTickLoc = plt.MaxNLocator(5)
-        handSigColorBar.locator = arrayTickLoc
-        handSigColorBar.update_ticks()
-
-        listOutTickLabels = ['']*5
-        listOutTickLabels[0] = 'Low'
-        listOutTickLabels[-1] = 'High'
-
-        handSigColorBar.ax.set_yticklabels(listOutTickLabels)
-
-
-        handAxIn.text(numColorBarLabelXPos, numColorBarLabelYPos,
-                      'TCGA sample\ndensity',
-                    fontsize=Plot.numFontSize*0.7, horizontalalignment='center', verticalalignment='center',
-                    weight='bold', zorder=numScatterZOrder+3)
-        handAxIn.text(numScatterLabelXPos, numScatterLabelYPos,
-                      'Cell line\nclassification',
-                    fontsize=Plot.numFontSize*0.7, horizontalalignment='center', verticalalignment='center',
-                    weight='bold', zorder=numScatterZOrder+3)
-
-        for iType in range(numCellLineSubtypes):
-            handAxIn.scatter(numScatterLegendXPos,
-                             numScatterLegendYPos+numScatterLegendTextYOffset*(iType+1),
-                             c=listSubtypePlotColors[iType],
-                             clip_on=False,
-                             marker='^',
-                             s=numCellLineMarkerSize, edgecolor='k',
-                             lw=numCellLineMarkerLineWidth,
-                             zorder=numScatterZOrder+3)
-            handAxIn.text(numScatterLegendXPos+numScatterLegendTextXOffset,
-                          numScatterLegendYPos+numScatterLegendTextYOffset*(iType+1),
-                          listCellLineSubtypesToDisp[iType],
-                          fontsize=Plot.numFontSize*0.7,
-                          verticalalignment='center',
-                          horizontalalignment='left',
-                          zorder=numScatterZOrder+3)
-        handAxIn.scatter(numScatterLegendXPos,
-                         numScatterLegendYPos + numScatterLegendTextYOffset * (numCellLineSubtypes + 1),
-                         c='g',
-                         clip_on=False,
-                         marker='^',
-                         s=numCellLineMarkerSize, edgecolor='k',
-                         lw=numCellLineMarkerLineWidth,
-                         zorder=numScatterZOrder + 3)
-        handAxIn.text(numScatterLegendXPos + numScatterLegendTextXOffset,
-                      numScatterLegendYPos + numScatterLegendTextYOffset * (numCellLineSubtypes + 1),
-                      'EpiCRISPR samples',
-                      fontsize=Plot.numFontSize * 0.7,
-                      verticalalignment='center',
-                      horizontalalignment='left',
-                      zorder=numScatterZOrder + 3)
+        #
+        # handAxIn.text(numColorBarLabelXPos, numColorBarLabelYPos,
+        #               'TCGA sample\ndensity',
+        #             fontsize=Plot.numFontSize*0.7, horizontalalignment='center', verticalalignment='center',
+        #             weight='bold', zorder=numScatterZOrder+3)
+        # handAxIn.text(numScatterLabelXPos, numScatterLabelYPos,
+        #               'Cell line\nclassification',
+        #             fontsize=Plot.numFontSize*0.7, horizontalalignment='center', verticalalignment='center',
+        #             weight='bold', zorder=numScatterZOrder+3)
+        #
+        # for iType in range(numCellLineSubtypes):
+        #     handAxIn.scatter(numScatterLegendXPos,
+        #                      numScatterLegendYPos+numScatterLegendTextYOffset*(iType+1),
+        #                      c=listSubtypePlotColors[iType],
+        #                      clip_on=False,
+        #                      marker='^',
+        #                      s=numCellLineMarkerSize, edgecolor='k',
+        #                      lw=numCellLineMarkerLineWidth,
+        #                      zorder=numScatterZOrder+3)
+        #     handAxIn.text(numScatterLegendXPos+numScatterLegendTextXOffset,
+        #                   numScatterLegendYPos+numScatterLegendTextYOffset*(iType+1),
+        #                   listCellLineSubtypesToDisp[iType],
+        #                   fontsize=Plot.numFontSize*0.7,
+        #                   verticalalignment='center',
+        #                   horizontalalignment='left',
+        #                   zorder=numScatterZOrder+3)
+        # handAxIn.scatter(numScatterLegendXPos,
+        #                  numScatterLegendYPos + numScatterLegendTextYOffset * (numCellLineSubtypes + 1),
+        #                  c='g',
+        #                  clip_on=False,
+        #                  marker='^',
+        #                  s=numCellLineMarkerSize, edgecolor='k',
+        #                  lw=numCellLineMarkerLineWidth,
+        #                  zorder=numScatterZOrder + 3)
+        # handAxIn.text(numScatterLegendXPos + numScatterLegendTextXOffset,
+        #               numScatterLegendYPos + numScatterLegendTextYOffset * (numCellLineSubtypes + 1),
+        #               'EpiCRISPR samples',
+        #               fontsize=Plot.numFontSize * 0.7,
+        #               verticalalignment='center',
+        #               horizontalalignment='left',
+        #               zorder=numScatterZOrder + 3)
 
         return flagResult
 
@@ -1644,8 +1648,7 @@ class Plot:
         # Hexbin landscape
         handAx = handFig.add_axes(dictPanelLoc['Hexbin_Landscape'])
 
-        _ = PlotFunc.es_ms_landscape(handAxIn=handAx,
-                                     handFigIn=handFig)
+        _ = PlotFunc.es_ms_landscape(handAxIn=handAx)
 
         # # # # # # # # #       #       #       #       #       #       #
         # Histograms
@@ -1835,10 +1838,7 @@ class Plot:
 
         return flagResult
 
-dictTissue = Process.tan2012_tissue_genes()
-dictCellLine = Process.tan2012_cell_line_genes()
-
-_ = Process.all_epi_mes_scores()
+# _ = Process.all_epi_mes_scores()
 _ = Plot.figure_five()
 
 
