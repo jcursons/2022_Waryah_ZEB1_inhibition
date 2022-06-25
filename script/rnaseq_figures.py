@@ -11,6 +11,7 @@ import pandas as pd
 import pickle
 import scipy.cluster.hierarchy as SciPyClus
 import scipy.stats as scs
+from singscore.singscore import *
 import sys
 
 class PathDir:
@@ -30,19 +31,18 @@ class PathDir:
     for strFolder in ['preproc', 'ref']:
         pathRefData = os.path.join(pathRefData, strFolder)
 
+    pathPublicData = dirBaseGit
+    for strFolder in ['preproc', 'public_data']:
+        pathPublicData = os.path.join(pathPublicData, strFolder)
+
 class Process:
 
-    listQuantFiles = [
-        'Waryah_Dec2017_MDAMB231_ZEB1-epiCRISPR_QuantGeneLevel.csv',
-        'Waryah_Sept2017_SUM159_ZEB1-epiCRISPR_QuantGeneLevel.csv']
-
-    listDiffExprFiles = [
-        'voom-limma_MDAMB231_GAll-EVC_diffExpr.csv',
-        'voom-limma_SUM159_GAll-EVC_diffExpr.csv']
-    listLines = ['MDAMB231',
-                 'SUM159']
     listLinesForDisp = ['MDA-MB-231',
                         'SUM159']
+    listLines = [strLine.replace('-','') for strLine in listLinesForDisp]
+    listDiffExprFiles = [
+        f'voom-limma_{strLine}_GAll-EVC_diffExpr.csv' for strLine in listLines]
+
     listOfListsConds = [['NTC', 'NTC', 'NTC',
                          'EVC', 'EVC', 'EVC',
                          'g4', 'g4', 'g4',
@@ -54,40 +54,12 @@ class Process:
 
     def quant_data(flagResult=False):
 
-        listDFToMerge = []
+        strQuantFile = 'Waryah_Oct2017_ZEB1-epiCRISPR_QuantGeneLevel_lengthScaledTPM.csv'
 
-        for iFile in range(len(Process.listQuantFiles)):
-            strFileName = Process.listQuantFiles[iFile]
+        dfData = pd.read_table(os.path.join(PathDir.pathProcRNAData, strQuantFile),
+                               sep=',', header=0, index_col=0)
 
-            dfIn = pd.read_table(os.path.join(PathDir.pathProcResults, strFileName),
-                                 sep=',', header=0, index_col=0)
-
-            if strFileName.startswith('Differentially expressed genes'):
-                listColumns = dfIn.columns.tolist()
-                listColToDrop = [strCol for strCol in listColumns if strCol not in Process.listOfListsConds[iFile]]
-                dfIn.drop(columns=listColToDrop, inplace=True)
-                listIndex = dfIn.index.tolist()
-                listIndexClean = [strIndex.split('.')[0] for strIndex in listIndex]
-                dfIn.index = listIndexClean
-                listColRenamed = []
-                for strCol in Process.listOfListsConds[iFile]:
-
-                    if strCol.startswith('EVC'):
-                        strColNew = strCol[-1] + '_SUM159-Mult_EVC'
-                    elif strCol.startswith('AllTF4.'):
-                        strColNew = strCol[-1] + '_SUM159-Mult_AllTF'
-
-                    listColRenamed.append(strColNew)
-
-                dfIn.rename(columns=dict(zip(Process.listOfListsConds[iFile], listColRenamed)), inplace=True)
-                dfIn = dfIn[~dfIn.index.duplicated(keep='first')]
-
-
-            listDFToMerge.append(dfIn)
-
-        dfMerged = pd.concat(listDFToMerge, axis=1)
-
-        return dfMerged
+        return dfData
 
     def diff_expr_data(flagResult=False):
 
@@ -136,178 +108,192 @@ class Process:
         return dfMerged
 
     def tcga_scores(flagResult=False,
+                    dfIn=pd.DataFrame(),
                     flagPerformExtraction=False):
 
-        strTempFileName = 'TCGA-BRCA-EpiMesScores.pickle'
+        strTempFileName = 'TCGA-BRCA-EpiMesScores.tsv'
+        pathOut = os.path.join(PathDir.pathOutFolder, 'figure_5')
 
-        if not os.path.exists(os.path.join(PathDir.pathProcResults, strTempFileName)):
+        if not os.path.exists(os.path.join(pathOut, strTempFileName)):
             flagPerformExtraction = True
-
 
         if flagPerformExtraction:
 
-            dfTCGABrCa = Process.tcga_brca()
-            listTCGAGenes = dfTCGABrCa.index.tolist()
-            listTCGASamples = dfTCGABrCa.columns.tolist()
+            listTCGAGenes = dfIn.index.tolist()
+            listTCGASamples = dfIn.columns.tolist()
             numSamples = len(listTCGASamples)
 
-            listSharedGenes = Process.common_rna_genes()
-            setOutGenes = set(listSharedGenes)
-
-            listTCGAOutGenes = [strGene for strGene in listTCGAGenes if strGene.split('|')[0] in setOutGenes]
-
-            # dictEpiMesCellLine = Process.tan2012_cell_line_genes()
-            # listEpiCellLineGenes = dictEpiMesCellLine['epi_genes']
-            # listMesCellLineGenes = dictEpiMesCellLine['mes_genes']
-            dictEpiMesTissue = GeneSetScoring.ExtractList.tan2012_tumour_genes()
-            listEpiTissueGenes = dictEpiMesTissue['epi_genes']
-            listMesTissueGenes = dictEpiMesTissue['mes_genes']
+            dictEpiMesCellLine = Process.tan2012_tissue_genes()
+            listEpiTissueGenes = dictEpiMesCellLine['epi_genes']
+            listMesTissueGenes = dictEpiMesCellLine['mes_genes']
 
             # create lists of the cell line/tissue epithelial/mesenchymal gene lists for scoring
-            # listOutputEpiCellLineGenes = list(set(listEpiCellLineGenes).intersection(setOutGenes))
-            # listOutputMesCellLineGenes = list(set(listMesCellLineGenes).intersection(setOutGenes))
-            listOutputEpiTissueGenes = list(set(listEpiTissueGenes).intersection(setOutGenes))
-            listOutputMesTissueGenes = list(set(listMesTissueGenes).intersection(setOutGenes))
-
             listOutputEpiTissueGenesMatched = [strGene for strGene in listTCGAGenes
-                                               if strGene.split('|')[0] in listOutputEpiTissueGenes]
+                                               if strGene.split('|')[0] in listEpiTissueGenes]
             listOutputMesTissueGenesMatched = [strGene for strGene in listTCGAGenes
-                                               if strGene.split('|')[0] in listOutputMesTissueGenes]
+                                               if strGene.split('|')[0] in listMesTissueGenes]
 
-            arrayTCGAEpiScores = np.zeros(numSamples, dtype=float)
-            arrayTCGAMesScores = np.zeros(numSamples, dtype=float)
+            dfScoresOut = pd.DataFrame(
+                {'Epithelial Score':np.zeros(numSamples, dtype=float),
+                 'Mesenchymal Score':np.zeros(numSamples, dtype=float)},
+                index=listTCGASamples)
+
             for iSample in range(numSamples):
                 print('Patient ' + '{}'.format(iSample))
                 strSample = listTCGASamples[iSample]
-                arrayTCGAEpiScores[iSample] = \
-                    GeneSetScoring.FromInput.single_sample_rank_score(
-                        listAllGenes=listTCGAOutGenes,
-                        arrayTranscriptAbundance=dfTCGABrCa[strSample].reindex(listTCGAOutGenes).values.astype(float),
-                        listUpGenesToScore=listOutputEpiTissueGenesMatched,
-                        flagApplyNorm=True)
-                arrayTCGAMesScores[iSample] = \
-                    GeneSetScoring.FromInput.single_sample_rank_score(
-                        listAllGenes=listTCGAOutGenes,
-                        arrayTranscriptAbundance=dfTCGABrCa[strSample].reindex(listTCGAOutGenes).values.astype(float),
-                        listUpGenesToScore=listOutputMesTissueGenesMatched,
-                        flagApplyNorm=True)
+                dfScore = score(up_gene=listOutputEpiTissueGenesMatched,
+                                sample=dfIn[[strSample]])
+                dfScoresOut.loc[strSample,'Epithelial Score'] = \
+                    dfScore['total_score'].values.astype(float)[0]
 
-            dfScores = pd.DataFrame({'Epithelial Score':arrayTCGAEpiScores,
-                                     'Mesenchymal Score':arrayTCGAMesScores},
-                                    index=listTCGASamples)
-            dfScores.to_pickle(os.path.join(PathDir.pathProcResults, strTempFileName))
+                dfScore = score(up_gene=listOutputMesTissueGenesMatched,
+                                sample=dfIn[[strSample]])
+                dfScoresOut.loc[strSample,'Mesenchymal Score'] = \
+                    dfScore['total_score'].values.astype(float)[0]
+
+            dfScoresOut.to_csv(os.path.join(pathOut, strTempFileName),
+                               sep='\t')
 
         else:
 
-            dfScores = pd.read_pickle(os.path.join(PathDir.pathProcResults, strTempFileName))
+            dfScoresOut = pd.read_table(os.path.join(pathOut, strTempFileName),
+                                        sep='\t', index_col=0, header=0)
 
-        return dfScores
+        return dfScoresOut
 
     def tcga_brca(flagResult=False,
                   flagPerformExtraction=False):
 
+        strPanCanRNASeqFile = 'EBPlusPlusAdjustPANCAN_IlluminaHiSeq_RNASeqV2.geneExp.tsv'
         strTempFileName = 'TCGA_BrCa_PreProc_RNA.pickle'
 
-        if not os.path.exists(os.path.join(PathDir.pathProcResults, strTempFileName)):
+        if not os.path.exists(os.path.join(PathDir.pathPublicData, strTempFileName)):
             flagPerformExtraction = True
 
         if flagPerformExtraction:
-            #   #   #   #   #   #   #   #   #   #   #   #   #   #   #   #   #   #   #   #   #
-            # extract the TCGA pan-cancer RNA-seq data
-            dfTCGA = TCGAFunctions.PanCancer.extract_mess_rna()
-            listTCGARNASamples = dfTCGA.columns.tolist()
 
             # extract the TCGA pan-cancer patient metadata
-            dfMeta = TCGAFunctions.PanCancer.extract_clinical_data()
+            dfMeta = pd.read_excel(
+                os.path.join(PathDir.pathPublicData, 'TCGA-CDR-SupplementalTableS1.xlsx'),
+                header=0, index_col=0, sheet_name='TCGA-CDR')
             dfMeta.set_index('bcr_patient_barcode', inplace=True)
 
             # identify patients which are flagged as the breast cancer cohort
             listBRCAPatients = dfMeta[dfMeta['type']=='BRCA'].index.tolist()
 
+            dfTCGAPanCanSamples = pd.read_table(
+                os.path.join(PathDir.pathPublicData, strPanCanRNASeqFile),
+                sep='\t', header=None, index_col=None, nrows=1)
+            listTCGAPanCanColumns = dfTCGAPanCanSamples.iloc[0,:].tolist()
+            listTCGAPanCanSamples = listTCGAPanCanColumns[1:]
+
             # extract primary tumour (index 01) samples from the full sample list
-            listBRCASamples = [strSample for strSample in listTCGARNASamples
+            listBRCASamples = [strSample for strSample in listTCGAPanCanSamples
                                if np.bitwise_and(strSample[0:len('TCGA-NN-NNNN')] in listBRCAPatients,
                                                  strSample[13:15]=='01')]
 
+            #   #   #   #   #   #   #   #   #   #   #   #   #   #   #   #   #   #   #   #   #
+            # extract the TCGA pan-cancer RNA-seq data
+
             #take this subset
-            dfTCGABrCa = dfTCGA[listBRCASamples]
-            dfTCGABrCa.to_pickle(os.path.join(PathDir.pathProcResults, strTempFileName))
+            dfTCGABrCa = pd.read_table(
+                os.path.join(PathDir.pathPublicData, strPanCanRNASeqFile),
+                sep='\t', header=0, index_col=0,
+                usecols=[listTCGAPanCanColumns[0]]+listBRCASamples)
+            dfTCGABrCa.to_pickle(os.path.join(PathDir.pathPublicData, strTempFileName))
         else:
-            dfTCGABrCa = pd.read_pickle(os.path.join(PathDir.pathProcResults, strTempFileName))
+            dfTCGABrCa = pd.read_pickle(os.path.join(PathDir.pathPublicData, strTempFileName))
 
         return dfTCGABrCa
 
     def ccle_brca(flagResult=False,
                   flagPerformExtraction=False):
 
-        dfCCLE = DepMapTools.Load.all_rnaseq_data()
-        listCellLines = dfCCLE.index.tolist()
-        listBrCaLines = [strLine for strLine in listCellLines if '_BREAST' in strLine]
+        strTempFile = 'CCLE_BRCA_RNA_Abund.tsv'
 
-        return dfCCLE.reindex(listBrCaLines)
-
-    def ccle_scores(flagResult=False,
-                    flagPerformExtraction=False):
-
-        strTempFileName = 'CCLE-BRCA-EpiMesScores.pickle'
-
-        if not os.path.exists(os.path.join(PathDir.pathProcResults, strTempFileName)):
+        if not os.path.exists(os.path.join(PathDir.pathPublicData, strTempFile)):
             flagPerformExtraction = True
 
         if flagPerformExtraction:
 
-            dfCCLEBrCa = Process.ccle_brca()
-            listCCLEGenes = dfCCLEBrCa.columns.tolist()
-            listCCLELines = dfCCLEBrCa.index.tolist()
-            numCellLines = len(listCCLELines)
+            #https://ndownloader.figshare.com/files/35020903
+            dfMetaData = pd.read_table(os.path.join(PathDir.pathPublicData, 'sample_info.csv'),
+                                       sep=',', index_col=0, header=0)
+            listBRCALinesACH = dfMetaData[dfMetaData['primary_disease'] == 'Breast Cancer'].index.tolist()
+            dictACHToCCLE = dict(zip(listBRCALinesACH,
+                                     dfMetaData['CCLE_Name'].reindex(listBRCALinesACH).values.tolist()))
 
-            listSharedGenes = Process.common_rna_genes()
-            setOutGenes = set(listSharedGenes)
+            #https://ndownloader.figshare.com/files/34989919
+            dfCCLE = pd.read_table(os.path.join(PathDir.pathPublicData, 'CCLE_expression.csv'),
+                                   sep=',', index_col=0, header=0)
 
-            listCCLEOutGenes = [strGene for strGene in listCCLEGenes if strGene.split(' (')[0] in setOutGenes]
+            dfBrCa = dfCCLE.reindex(listBRCALinesACH).copy(deep=True)
+            dfBrCa.rename(
+                index=dict(zip(listBRCALinesACH,[dictACHToCCLE[strLine] for strLine in listBRCALinesACH])),
+                inplace=True)
+
+            dfBrCa.to_csv(os.path.join(PathDir.pathPublicData, strTempFile),
+                          sep='\t')
+
+        else:
+            dfBrCa = pd.read_table(os.path.join(PathDir.pathPublicData, strTempFile),
+                                   sep='\t', index_col=0)
+
+        return dfBrCa
+
+    def ccle_scores(flagResult=False,
+                    flagPerformExtraction=False,
+                    dfIn=pd.DataFrame()):
+
+        strTempFileName = 'CCLE-BRCA-EpiMesScores.pickle'
+        pathOut = os.path.join(PathDir.pathOutFolder, 'figure_5')
+
+        if not os.path.exists(os.path.join(pathOut, strTempFileName)):
+            flagPerformExtraction = True
+
+        if flagPerformExtraction:
+
+            listTCGAGenes = dfIn.index.tolist()
+            listTCGASamples = dfIn.columns.tolist()
+            numSamples = len(listTCGASamples)
 
             dictEpiMesCellLine = Process.tan2012_cell_line_genes()
             listEpiCellLineGenes = dictEpiMesCellLine['epi_genes']
             listMesCellLineGenes = dictEpiMesCellLine['mes_genes']
 
             # create lists of the cell line/tissue epithelial/mesenchymal gene lists for scoring
-            listOutputEpiCellLineGenes = list(set(listEpiCellLineGenes).intersection(setOutGenes))
-            listOutputMesCellLineGenes = list(set(listMesCellLineGenes).intersection(setOutGenes))
+            listOutputEpiCellLineGenesMatched = [strGene for strGene in listTCGAGenes
+                                               if strGene.split(' (')[0] in listEpiCellLineGenes]
+            listOutputMesCellLineGenesMatched = [strGene for strGene in listTCGAGenes
+                                               if strGene.split(' (')[0] in listMesCellLineGenes]
 
+            dfScoresOut = pd.DataFrame(
+                {'Epithelial Score':np.zeros(numSamples, dtype=float),
+                 'Mesenchymal Score':np.zeros(numSamples, dtype=float)},
+                index=listTCGASamples)
 
-            listOutputEpiCellLineGenesMatched = [strGene for strGene in listCCLEGenes
-                                               if strGene.split(' (')[0] in listOutputEpiCellLineGenes]
-            listOutputMesCellLineGenesMatched = [strGene for strGene in listCCLEGenes
-                                               if strGene.split(' (')[0] in listOutputMesCellLineGenes]
+            for iSample in range(numSamples):
+                print('Patient ' + '{}'.format(iSample))
+                strSample = listTCGASamples[iSample]
+                dfScore = score(up_gene=listOutputEpiCellLineGenesMatched,
+                                sample=dfIn[[strSample]])
+                dfScoresOut.loc[strSample,'Epithelial Score'] = \
+                    dfScore['total_score'].values.astype(float)[0]
 
-            arrayCCLEEpiScores = np.zeros(numCellLines, dtype=float)
-            arrayCCLEMesScores = np.zeros(numCellLines, dtype=float)
-            for iCellLine in range(numCellLines):
-                print('Cell Line ' + '{}'.format(iCellLine))
-                # strLine = listCCLELines[iCellLine]
-                arrayCCLEEpiScores[iCellLine] = \
-                    GeneSetScoring.FromInput.single_sample_rank_score(
-                        listAllGenes=listCCLEOutGenes,
-                        arrayTranscriptAbundance=dfCCLEBrCa[listCCLEOutGenes].iloc[iCellLine].values.astype(float),
-                        listUpGenesToScore=listOutputEpiCellLineGenesMatched,
-                        flagApplyNorm=True)
-                arrayCCLEMesScores[iCellLine] = \
-                    GeneSetScoring.FromInput.single_sample_rank_score(
-                        listAllGenes=listCCLEOutGenes,
-                        arrayTranscriptAbundance=dfCCLEBrCa[listCCLEOutGenes].iloc[iCellLine].values.astype(float),
-                        listUpGenesToScore=listOutputMesCellLineGenesMatched,
-                        flagApplyNorm=True)
+                dfScore = score(up_gene=listOutputMesCellLineGenesMatched,
+                                sample=dfIn[[strSample]])
+                dfScoresOut.loc[strSample,'Mesenchymal Score'] = \
+                    dfScore['total_score'].values.astype(float)[0]
 
-            dfScores = pd.DataFrame({'Epithelial Score':arrayCCLEEpiScores,
-                                     'Mesenchymal Score':arrayCCLEMesScores},
-                                    index=listCCLELines)
-            dfScores.to_pickle(os.path.join(PathDir.pathProcResults, strTempFileName))
+            dfScoresOut.to_csv(os.path.join(pathOut, strTempFileName),
+                               sep='\t')
 
         else:
 
-            dfScores = pd.read_pickle(os.path.join(PathDir.pathProcResults, strTempFileName))
+            dfScoresOut = pd.read_table(os.path.join(pathOut, strTempFileName),
+                                        sep='\t', index_col=0, header=0)
 
-        return dfScores
+        return dfScoresOut
 
     def local_scores(flagResult=False,
                     flagPerformExtraction=False):
@@ -387,6 +373,43 @@ class Process:
             dfScores = pd.read_pickle(os.path.join(PathDir.pathProcResults, strTempFileName))
 
         return dfScores
+
+    def all_epi_mes_scores(flagResult=False):
+
+        dictENSGToHGNC = Process.dict_gtf_ensg_to_hgnc()
+        dictHGNCToENSG = dict(zip(dictENSGToHGNC.values(), dictENSGToHGNC.keys()))
+
+        dfLocalData = Process.quant_data()
+        listLocalGenesENSG = dfLocalData.index.tolist()
+        setLocalGenesENSG = set(listLocalGenesENSG)
+
+        dfTCGA = Process.tcga_brca()
+        listTCGAGenes = dfTCGA.index.tolist()
+        listTCGAGenesHGNC = [strGene.split('|')[0] for strGene in listTCGAGenes]
+        for strGene in list(set(listTCGAGenesHGNC).difference(set(dictHGNCToENSG.keys()))):
+            dictHGNCToENSG[strGene] = 'failed_map|'+strGene
+        listTCGAGenesENSG = [dictHGNCToENSG[strGene] for strGene in listTCGAGenesHGNC]
+        setTCGAGenesENSG = set(listTCGAGenesENSG)
+
+        dfCCLE = Process.ccle_brca()
+        listCCLEGenes = dfCCLE.columns.tolist()
+        listCCLEGenesHGNC = [strGene.split(' (')[0] for strGene in listCCLEGenes]
+        listCCLEGenesENSG = [dictHGNCToENSG[strGene] for strGene in listCCLEGenesHGNC]
+        setCCLEGenesENSG = set(listCCLEGenesENSG)
+
+        listCommonGenesENSG = list(setCCLEGenesENSG.intersection(setLocalGenesENSG.intersection(setTCGAGenesENSG)))
+        listCommonGenesHGNC = [dictENSGToHGNC[strGene] for strGene in listCommonGenesENSG]
+
+        listTCGAGenesOut = [strGene for strGene in listTCGAGenes if strGene.split('|')[0] in listCommonGenesHGNC]
+        listCCLEGenesOut = [strGene for strGene in listCCLEGenes if strGene.split(' (')[0] in listCommonGenesHGNC]
+
+        dfTCGAScores = Process.tcga_scores(dfIn=dfTCGA.reindex(listTCGAGenesOut))
+        dfCCLEScores = Process.ccle_scores(dfIn=dfCCLE[listCCLEGenesOut].transpose())
+        dfLocalScores = Process.local_scores()
+
+        return {'TCGA':dfTCGAScores,
+                'CCLE':dfCCLEScores,
+                'LocalData':dfLocalScores}
 
     def ccle_brca_subtypes(flagResult=False):
 
@@ -651,12 +674,12 @@ class Process:
 
         # load the gene lists
         dfGeneLists = pd.read_csv(
-            os.path.join(PathDir.pathRefData, 'Thiery_generic_EMT_sig_cellLine.txt'), 
+            os.path.join(PathDir.pathRefData, 'Thiery_generic_EMT_signatures.txt'),
             sep='\t', header=0, index_col=None)
 
         # extract as individual lists
-        listEpiGenes = dfGeneLists['cellLine_sig'][dfGeneLists['epi_mes'] == 'epi'].values.tolist()
-        listMesGenes = dfGeneLists['cellLine_sig'][dfGeneLists['epi_mes'] == 'mes'].values.tolist()
+        listEpiGenes = dfGeneLists['genes'][dfGeneLists['epiMes_cellLine'] == 'epi'].values.tolist()
+        listMesGenes = dfGeneLists['genes'][dfGeneLists['epiMes_cellLine'] == 'mes'].values.tolist()
 
         # update some more recently defined gene names
         dictNewNames = {'C1orf106':'INAVA',
@@ -669,6 +692,51 @@ class Process:
                         'LHFP':'LHFPL6',
                         'KDELC1':'POGLUT2',
                         'PTRF':'CAVIN1'}
+
+        for iGene in range(len(listEpiGenes)):
+            strGene = listEpiGenes[iGene]
+            if strGene in dictNewNames.keys():
+                listEpiGenes[iGene] = dictNewNames[strGene]
+
+        for iGene in range(len(listMesGenes)):
+            strGene = listMesGenes[iGene]
+            if strGene in dictNewNames.keys():
+                listMesGenes[iGene] = dictNewNames[strGene]
+
+        # return as a dictionary of lists
+        return {'epi_genes': listEpiGenes, 'mes_genes': listMesGenes}
+
+    def tan2012_tissue_genes(flagResult=False):
+
+        # Tissue epithelial & mesenchymal gene lists from:
+        #   TZ Tan et al. (2012) [JP Thiery]. Epithelial-mesenchymal transition spectrum quantification
+        #    and its efficacy in deciphering survival and drug responses of cancer patients.
+        #   DOI: 10.15252/emmm.201404208
+
+        # load the gene lists
+        dfGeneLists = pd.read_csv(
+            os.path.join(PathDir.pathRefData, 'Thiery_generic_EMT_signatures.txt'),
+            sep='\t', header=0, index_col=None)
+
+        # extract as individual lists
+        listEpiGenes = dfGeneLists['genes'][dfGeneLists['epiMes_tumor'] == 'epi'].values.tolist()
+        listMesGenes = dfGeneLists['genes'][dfGeneLists['epiMes_tumor'] == 'mes'].values.tolist()
+
+        # update some more recently defined gene names
+        dictNewNames = {'C14orf139':'SYNE3',
+                        'GUCY1B3':'GUCY1B1',
+                        'KIAA1462':'JCAD',
+                        'LHFP':'LHFPL6',
+                        'PTRF':'CAVIN1',
+                        'SEPT6':'SEPTIN6',
+                        'C19orf21':'MISP',
+                        'C1orf106':'INAVA',
+                        'GPR56':'ADGRG1',
+                        'PPAP2C':'PLPP2'
+                        }
+
+        # dictENSGToHGNC = Process.dict_gtf_ensg_to_hgnc()
+        # dictHGNCToENSG = dict(zip(dictENSGToHGNC.values(), dictENSGToHGNC.keys()))
 
         for iGene in range(len(listEpiGenes)):
             strGene = listEpiGenes[iGene]
@@ -907,9 +975,7 @@ class PlotFunc:
         listSamplesToPlot = ['SUM159_EVC',
                              'SUM159_gRNA_All',
                              'MDA231_EVC',
-                             'MDA231_gRNA_All',
-                             'SUM159-Mult_EVC',
-                             'SUM159-Mult_AllTF']
+                             'MDA231_gRNA_All']
 
         numMaxXTicks = 5
         numMaxYTicks = 5
@@ -920,25 +986,22 @@ class PlotFunc:
         numScatterZOrder = 11
 
         dictLineLabel = {'SUM159':'SUM159',
-                         'MDA231':'MDA-MB-231',
-                         'SUM159-Mult':'SUM159^'}
+                         'MDA231':'MDA-MB-231'}
         dictCondLabel = {'EVC': 'Empty\nvector',
-                         'gRNA_All': 'ZEB1 gRNAs',
-                         'AllTF': 'All TFs'}
+                         'gRNA_All': 'ZEB1 gRNAs'}
 
         dictOfDictOffsets = {'SUM159': {},
-                             'MDA231': {},
-                             'SUM159-Mult': {}}
+                             'MDA231': {}}
         dictOfDictOffsets['SUM159']['EVC'] = (-0.08, 0.02)
         dictOfDictOffsets['SUM159']['gRNA_All'] = (-0.03, -0.07)
         dictOfDictOffsets['MDA231']['EVC'] = (0.04, 0.10)
         dictOfDictOffsets['MDA231']['gRNA_All'] = (-0.07, -0.07)
-        dictOfDictOffsets['SUM159-Mult']['EVC'] = (0.01, 0.10)
-        dictOfDictOffsets['SUM159-Mult']['AllTF'] = (-0.08, -0.05)
 
-        dfTCGAScores = Process.tcga_scores()
-        dfCCLEScores = Process.ccle_scores()
-        dfLocalScores = Process.local_scores(flagPerformExtraction=False)
+        dictAllScores = Process.all_epi_mes_scores()
+
+        dfTCGAScores = dictAllScores['TCGA']
+        dfCCLEScores = dictAllScores['CCLE']
+        dfLocalScores = dictAllScores['LocalData']
 
         dictBrCaLineToType = Process.ccle_brca_subtypes()
 
@@ -1170,13 +1233,6 @@ class PlotFunc:
 
         arrayMaxAbsLogFC = np.max(np.abs(dfMergedRNA['MDAMB231:logFC'].values.astype(float)))
 
-        handAxInMDAMB231.scatter(dfMergedRNA['MDAMB231:logFC'].values.astype(float),
-                       -np.log10(dfMergedRNA['MDAMB231:adj.P.Val'].values.astype(float)),
-                       lw=0.0,
-                       s=4,
-                       color='0.7',
-                       alpha=0.4,
-                       label='All')
         handAxInMDAMB231.scatter(dfMergedRNA['MDAMB231:logFC'].reindex(listEpiGenesENSG).values.astype(float),
                        -np.log10(dfMergedRNA['MDAMB231:adj.P.Val'].reindex(listEpiGenesENSG).values.astype(
                            float)),
@@ -1184,7 +1240,8 @@ class PlotFunc:
                        s=4,
                        color='green',
                        alpha=0.9,
-                       label='Epithelial')
+                       label='Epithelial',
+                                 zorder=5)
         handAxInMDAMB231.scatter(dfMergedRNA['MDAMB231:logFC'].reindex(listMesGenesENSG).values.astype(float),
                        -np.log10(dfMergedRNA['MDAMB231:adj.P.Val'].reindex(listMesGenesENSG).values.astype(
                            float)),
@@ -1192,7 +1249,16 @@ class PlotFunc:
                        s=4,
                        color='purple',
                        alpha=0.9,
-                       label='Mesenchymal')
+                       label='Mesenchymal',
+                                 zorder=5)
+        handAxInMDAMB231.scatter(dfMergedRNA['MDAMB231:logFC'].values.astype(float),
+                                 -np.log10(dfMergedRNA['MDAMB231:adj.P.Val'].values.astype(float)),
+                                 lw=0.0,
+                                 s=4,
+                                 color='0.7',
+                                 alpha=0.4,
+                                 label='Other',
+                                 zorder=4)
         handAxInMDAMB231.set_xlim([arrayMaxAbsLogFC*-1.05, arrayMaxAbsLogFC*1.05])
 
         # hide the right and top spines
@@ -1209,7 +1275,11 @@ class PlotFunc:
             if np.bitwise_and(dfMergedRNA['MDAMB231:adj.P.Val'].loc[strGene].astype(float) < numAdjPValThresh,
                               strGene in listEpiGenesENSG+listMesGenesENSG)]
         adjust_text(listHandTextMDAMB231,
-                    arrowProps=dict(arrowstyle=None))
+                    arrowprops=dict(arrowstyle='-|>,head_width=0.1,head_length=0.2',
+                                    color='k', lw=0.5,
+                                    connectionstyle="arc3",
+                                    alpha=0.25),
+                    )
 
         handAxInMDAMB231.set_xticks([-5, -2.5, 0, 2.5, 5])
 
@@ -1225,13 +1295,6 @@ class PlotFunc:
 
         arrayMaxAbsLogFC = np.max(np.abs(dfMergedRNA['SUM159:logFC'].values.astype(float)))
 
-        handAxInSUM159.scatter(dfMergedRNA['SUM159:logFC'].values.astype(float),
-                       -np.log10(dfMergedRNA['SUM159:adj.P.Val'].values.astype(float)),
-                       lw=0.0,
-                       s=4,
-                       color='0.7',
-                       alpha=0.4,
-                       label='Other')
         handAxInSUM159.scatter(dfMergedRNA['SUM159:logFC'].reindex(listEpiGenesENSG).values.astype(float),
                        -np.log10(dfMergedRNA['SUM159:adj.P.Val'].reindex(listEpiGenesENSG).values.astype(
                            float)),
@@ -1239,7 +1302,8 @@ class PlotFunc:
                        s=4,
                        color='green',
                        alpha=0.9,
-                       label='Epithelial')
+                       label='Epithelial',
+                               zorder=5)
         handAxInSUM159.scatter(dfMergedRNA['SUM159:logFC'].reindex(listMesGenesENSG).values.astype(float),
                        -np.log10(dfMergedRNA['SUM159:adj.P.Val'].reindex(listMesGenesENSG).values.astype(
                            float)),
@@ -1247,7 +1311,16 @@ class PlotFunc:
                        s=4,
                        color='purple',
                        alpha=0.9,
-                       label='Mesenchymal')
+                       label='Mesenchymal',
+                               zorder=5)
+        handAxInSUM159.scatter(dfMergedRNA['SUM159:logFC'].values.astype(float),
+                               -np.log10(dfMergedRNA['SUM159:adj.P.Val'].values.astype(float)),
+                               lw=0.0,
+                               s=4,
+                               color='0.7',
+                               alpha=0.4,
+                               label='Other',
+                               zorder=4)
         handAxInSUM159.set_xlim([arrayMaxAbsLogFC*-1.05, arrayMaxAbsLogFC*1.05])
 
 
@@ -1512,6 +1585,9 @@ class Plot:
             hspace=0.50, wspace=0.65
         )
 
+        numABYPos = 0.93
+        numFig5YPos = 0.95
+
         dictPanelLoc = {'Volcano:MDA-MB-231':[0.09, 0.90-numVolcanoHeight, numVolcanoWidth, numVolcanoHeight],
                         'Volcano:SUM159':[0.09, 0.48, numVolcanoWidth, numVolcanoHeight],
                         'HeatMap:RNA-seq':[0.64, 0.47, 0.14, numHeatMapPanelHeight],
@@ -1532,18 +1608,18 @@ class Plot:
                                      handAxInSUM159=handAxSUM159)
         structAxPos = handAxMDAMB231.get_position()
         handFig.text(structAxPos.x0-0.15*structAxPos.width,
-                     structAxPos.y0+1.1*structAxPos.height,
+                     numABYPos,
                      'a',
                      ha='left',
                      va='center',
-                     fontsize=Plot.numFontSize,
+                     fontsize=Plot.numFontSize*1.5,
                      fontweight='bold')
         handFig.text(structAxPos.x0-0.15*structAxPos.width,
-                     structAxPos.y0+1.3*structAxPos.height,
+                     numFig5YPos,
                      'Fig. 5',
                      ha='left',
                      va='center',
-                     fontsize=Plot.numFontSize,
+                     fontsize=Plot.numFontSize*1.5,
                      fontweight='bold')
 
         # # # # # #       #       #       #       #       #       #       #
@@ -1555,42 +1631,49 @@ class Plot:
         _ = PlotFunc.rnaseq_heatmap_and_annot(handAxInHeatmap=handAxHeatmap,
                                               handAxInHMCMap=handAxHMCMap,
                                               handAxInAnnot=handAxAnnot)
+        structAxPos = handAxHeatmap.get_position()
+        handFig.text(structAxPos.x0-0.5*structAxPos.width,
+                     numABYPos,
+                     'b',
+                     ha='left',
+                     va='center',
+                     fontsize=Plot.numFontSize*1.5,
+                     fontweight='bold')
 
-        # # # # # # # # # #       #       #       #       #       #       #
-        # # Hexbin landscape
-        # handAx = handFig.add_axes(dictPanelLoc['Hexbin_Landscape'])
-        #
-        # _ = PlotFunc.es_ms_landscape(handAxIn=handAx,
-        #                              handFigIn=handFig)
-        #
-        # # # # # # # # # #       #       #       #       #       #       #
-        # # Histograms
-        # listOutGenes = ['ZEB1', 'ESRP1',
-        #                 'F11R', 'MAP7',
-        #                 'CDS1', 'SH2D3A']
-        # numOutGeneRow = 0
-        # numOutGeneCol = 0
-        # for iGene in range(len(listOutGenes)):
-        #     strOutGene = listOutGenes[iGene]
-        #     handAx = plt.subplot(arrayGridSpec[numOutGeneRow, numOutGeneCol])
-        #     if numOutGeneCol == 0:
-        #         flagLabelY = True
-        #     else:
-        #         flagLabelY = False
-        #     if numOutGeneRow == 2:
-        #         flagLabelX = True
-        #     else:
-        #         flagLabelX = False
-        #
-        #     _ = PlotFunc.tcga_sel_gene_hist(handAxIn=handAx,
-        #                                     strGeneIn=strOutGene,
-        #                                     flagLabelYAxis=flagLabelY,
-        #                                     flagLabelXAxis=flagLabelX)
-        #     numOutGeneCol += 1
-        #     if numOutGeneCol >= 2:
-        #         numOutGeneRow += 1
-        #         numOutGeneCol=0
+        # # # # # # # # #       #       #       #       #       #       #
+        # Hexbin landscape
+        handAx = handFig.add_axes(dictPanelLoc['Hexbin_Landscape'])
 
+        _ = PlotFunc.es_ms_landscape(handAxIn=handAx,
+                                     handFigIn=handFig)
+
+        # # # # # # # # #       #       #       #       #       #       #
+        # Histograms
+        listOutGenes = ['ZEB1', 'ESRP1',
+                        'F11R', 'MAP7',
+                        'CDS1', 'SH2D3A']
+        numOutGeneRow = 0
+        numOutGeneCol = 0
+        for iGene in range(len(listOutGenes)):
+            strOutGene = listOutGenes[iGene]
+            handAx = plt.subplot(arrayGridSpec[numOutGeneRow, numOutGeneCol])
+            if numOutGeneCol == 0:
+                flagLabelY = True
+            else:
+                flagLabelY = False
+            if numOutGeneRow == 2:
+                flagLabelX = True
+            else:
+                flagLabelX = False
+
+            _ = PlotFunc.tcga_sel_gene_hist(handAxIn=handAx,
+                                            strGeneIn=strOutGene,
+                                            flagLabelYAxis=flagLabelY,
+                                            flagLabelXAxis=flagLabelX)
+            numOutGeneCol += 1
+            if numOutGeneCol >= 2:
+                numOutGeneRow += 1
+                numOutGeneCol=0
 
         pathOut = os.path.join(Plot.strOutputLoc, 'figure_5')
         for strFormat in Plot.listFileFormats:
@@ -1752,116 +1835,12 @@ class Plot:
 
         return flagResult
 
-    def comb_tf_volcano(flagResult=False):
+dictTissue = Process.tan2012_tissue_genes()
+dictCellLine = Process.tan2012_cell_line_genes()
 
-        dfData = Process.comb_tf_data()
+_ = Process.all_epi_mes_scores()
+_ = Plot.figure_five()
 
-        arrayLogFCData = dfData['Log2 Fold change'].values.astype(float)
-        arrayFDR = dfData['FDR step up'].values.astype(float)
-        numMinDFR = np.min(arrayFDR[arrayFDR > 0])
-        arrayFDR[arrayFDR == 0.0] = numMinDFR
-        arrayLogFDR = np.nan_to_num(-np.log10(arrayFDR))
-
-        arrayIsGeneToLabel = arrayLogFDR > 150
-        arrayGeneToLabelIndices = np.where(arrayIsGeneToLabel)[0]
-        # listGenesToLabel = [dfData['gene_name'].tolist()[i] for i in arrayGeneToLabelIndices]
-
-        numMaxAbsLogFC = np.max(np.abs(arrayLogFCData))
-        arrayXRange = np.array([-1.05*numMaxAbsLogFC, 1.05*numMaxAbsLogFC], dtype=float)
-
-        handFig = plt.figure(figsize=(5,5))
-
-        handAx = handFig.add_axes([0.15, 0.15, 0.84, 0.80])
-
-        handAx.scatter(arrayLogFCData,
-                       arrayLogFDR,
-                       s=5,
-                       alpha=0.5,
-                       lw=0.0,
-                       color='0.5')
-
-        arrayYLim = handAx.get_ylim()
-        handAx.set_xlim(arrayXRange)
-
-        handAx.set_xlabel('log$_{2}$(fold change)')
-        handAx.set_ylabel('-log$_{10}$(FDR)')
-
-        # hide the right and top spines
-        handAx.spines['right'].set_visible(False)
-        handAx.spines['top'].set_visible(False)
-
-        listHandText = [handAx.text(
-            arrayLogFCData[iGene],
-            arrayLogFDR[iGene],
-            dfData['gene_name'].iloc[iGene],
-            fontsize=Plot.numFontSize * 0.70,
-            style='italic',
-            ha='center', va='center')
-            for iGene in arrayGeneToLabelIndices]
-
-        adjust_text(listHandText,
-                    force_text=1.1,
-                    force_points=1.1,
-                    force_objects=1.1,
-                    arrowprops=dict(arrowstyle='-',
-                                    color='k', lw=0.5,
-                                    connectionstyle="arc3",
-                                    alpha=0.5),
-                    #arrowProps=dict(arrowstyle=None)
-                    )
-
-        handFig.savefig(os.path.join(PathDir.pathOutFolder, 'CombTF_volcano.png'),
-                        dpi=300)
-        handFig.savefig(os.path.join(PathDir.pathOutFolder, 'CombTF_volcano.pdf'),
-                        dpi=300)
-        plt.close(handFig)
-
-        a=1
-
-        return flagResult
-
-
-
-        # dfGeneOntology = GeneOntology.Map.all_transcripts_with_traversal()
-        #
-        # listLogFCCols = [strCol + ':log2FoldChange' for strCol in listDiffExprCondsToShow]
-        # listPValCols = [strCol + ':padj' for strCol in listDiffExprCondsToShow]
-        #
-        # listGenesForDispENSG = [dictHGNCToENSG[strGene] for strGene in listGenesForDisp]
-        #
-        # listOfDfGOEnrich = GeneOntology.EnrichmentTest.calc_relative_enrichment(
-        #     listOfListsMessRNAsToCheck=[listGenesForDisp],
-        #     listAllDataMessRNAs=listAllGenesHGNC,
-        #     stringListFormat='HGNC',
-        #     numMinGenesInCategory=3,
-        #     numMaxGenesInCategory=500)
-        #
-        # dfSigUpDiffExprGO = \
-        #     listOfDfGOEnrich[0][
-        #         np.bitwise_and(listOfDfGOEnrich[0]['GOEnrichPVal'] < 1E-3,
-        #                        listOfDfGOEnrich[0]['GOObsNum'] > 2)].copy(deep=True)
-        #
-        # arrayGOCatRankedByEnrich = np.argsort(dfSigUpDiffExprGO['GOEnrichPVal'].values.astype(float))
-        #
-        # listGOCatsEnriched = [dfSigUpDiffExprGO.index.tolist()[i] for i in arrayGOCatRankedByEnrich]
-        #
-        # if len(listGOCatsEnriched) > 25:
-        #     listGOCatsForDisp = [listGOCatsEnriched[i] for i in range(25)]
-        # else:
-        #     listGOCatsForDisp = listGOCatsEnriched
-        #
-        # dfGOCatMembership = pd.DataFrame(data=np.zeros((len(listGenesForDisp), len(listGOCatsForDisp)),
-        #                                                dtype=float),
-        #                                  index=listGenesForDisp,
-        #                                  columns=listGOCatsForDisp)
-        #
-        # for strCat in listGOCatsForDisp:
-        #     listGenesInThisGOCat = []
-        #     if strCat in dfGeneOntology.columns.tolist():
-        #         listGenesInThisGOCat = [dfGeneOntology.index.tolist()[i] for i in
-        #                                 np.where(dfGeneOntology[strCat])[0]]
-        #         listMatchedGenesInThisCat = list(set(listGenesInThisGOCat).intersection(set(listGenesForDisp)))
-        #     dfGOCatMembership[strCat].loc[listMatchedGenesInThisCat] = 1.0
 
 
 
@@ -1878,14 +1857,12 @@ class Plot:
 
 # dfLocalScores = Process.local_scores()
 
-_ = Process.go_rnaseq_diffexpr_genes()
+# _ = Process.go_rnaseq_diffexpr_genes()
 
-_ = Plot.figure_five()
-# _ = Plot.figure_six()
+# _ = Process.tcga_brca()
+
 
 # _ = Plot.off_targets()
-
-# _ = Plot.comb_tf_volcano()
 
 # _ = PlotFunc.es_ms_landscape()
 
