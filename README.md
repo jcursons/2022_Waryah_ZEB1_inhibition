@@ -11,6 +11,7 @@ For information on the associated code please contact:
 - Dr Momeneh (Sepideh) Foroutan (momeneh.foroutan (at) monash.edu)
 - Dr Christian Pflueger (christian.pflueger (at) uwa.edu.au)
 - Dr Liam Fearnley (fearnley.l (at) wehi.edu.au)
+- Dr Ramyar Molania (molania.r (at) wehi.edu.au )
 
 For further information on the manuscript or project please contact:
 - Dr Charlene Waryah (charlene.waryah (at) perkins.org.au)
@@ -23,7 +24,7 @@ The scientific manuscript associated with this repository has been submitted for
 
 ## Data availability
 
-Data generated for this project will be uploaded to GEO over the coming months.
+Data generated for this project will be uploaded to GEO over the coming weeks.
 
 ### Public data
 
@@ -69,12 +70,15 @@ For further details please see:
   - TCGA Network (2012). *Nature*
 
 
-
 ### script
 
 - Folder containing scripts and functions used for data analysis and figure generation.
-
-
+  - rnaseq_figures.py :: a python script to produce Fig. 5 from the manuscript
+    - this script has a non-standard dependency for label positions; please see the [adjustText documentation](https://adjusttext.readthedocs.io/en/latest/) for further information
+    - this script uses several large public data sets that cannot be included within this repository to size
+      constraints - processed subsets are included and information on original file links are listed inside of 
+      appropriate functions within this script, and within the 'Data availability/Public data' section above.
+    
 ### figures
 
 - Folder containing scripts and functions used for data analysis

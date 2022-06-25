@@ -1,2 +1,8 @@
 /.idea/
 /preproc/ref/GO_annot_traversed.pickle
+/preproc/public_data/CCLE_expression.csv
+/preproc/public_data/CCLE_BRCA_RNA_Abund.tsv
+/preproc/public_data/EBPlusPlusAdjustPANCAN_IlluminaHiSeq_RNASeqV2.geneExp.tsv
+/preproc/public_data/TCGA_BrCa_PreProc_RNA.pickle
+/preproc/public_data/TCGA-CDR-SupplementalTableS1.xlsx
+/preproc/public_data/sample_info.csv
