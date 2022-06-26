@@ -951,7 +951,8 @@ class PlotFunc:
 
     def es_ms_landscape(
             flagResult=False,
-            handAxIn='undefined'):
+            handAxIn='undefined',
+            handFigIn='undefined'):
 
         listOfListsCellLineSubtypes = [['luminal'],
                                        ['HER2_amp', 'luminal_HER2_amp'],
@@ -987,15 +988,15 @@ class PlotFunc:
 
         dictLineLabel = {'SUM159':'SUM159',
                          'MDAMB231':'MDA-MB-231'}
-        dictCondLabel = {'EVC': 'Empty\nvector',
+        dictCondLabel = {'EVC': 'Empty vector',
                          'gAll': 'All gRNAs'}
 
         dictOfDictOffsets = {'SUM159': {},
                              'MDAMB231': {}}
-        dictOfDictOffsets['SUM159']['EVC'] = (-0.08, 0.02)
-        dictOfDictOffsets['SUM159']['gAll'] = (-0.03, -0.07)
-        dictOfDictOffsets['MDAMB231']['EVC'] = (0.04, 0.10)
-        dictOfDictOffsets['MDAMB231']['gAll'] = (-0.07, -0.07)
+        dictOfDictOffsets['SUM159']['EVC'] = (-0.08, 0.10)
+        dictOfDictOffsets['SUM159']['gAll'] = (0.01, -0.12)
+        dictOfDictOffsets['MDAMB231']['EVC'] = (-0.03, 0.10)
+        dictOfDictOffsets['MDAMB231']['gAll'] = (0.05, 0.125)
 
         dictAllScores = Process.all_epi_mes_scores()
 
@@ -1009,8 +1010,9 @@ class PlotFunc:
 
         dictBrCaLineToType = Process.ccle_brca_subtypes()
 
+        numMinTCGAEpiScore = np.min(dfTCGAScores['Epithelial Score'].values.astype(float))
         numMinES = np.min([np.min(dfLocalScores['Epithelial Score'].values.astype(float)),
-                           np.min(dfTCGAScores['Epithelial Score'].values.astype(float)),
+                           numMinTCGAEpiScore,
                            np.min(dfCCLEScores['Epithelial Score'].values.astype(float))
                            ])
 
@@ -1024,8 +1026,9 @@ class PlotFunc:
                            np.min(dfCCLEScores['Mesenchymal Score'].values.astype(float))
                            ])
 
+        numMaxTCGAMesScore = np.max(dfTCGAScores['Mesenchymal Score'].values.astype(float))
         numMaxMS = np.max([np.max(dfLocalScores['Mesenchymal Score'].values.astype(float)),
-                           np.max(dfTCGAScores['Mesenchymal Score'].values.astype(float)),
+                           numMaxTCGAMesScore,
                            np.max(dfCCLEScores['Mesenchymal Score'].values.astype(float))
                            ])
 
@@ -1038,8 +1041,28 @@ class PlotFunc:
                                     bins='log',
                                     gridsize=50,
                                     alpha=0.5,
+                                    lw=0.1,
                                     extent=[numMinScore-0.13, numMaxScore+0.08,
-                                            numMinScore-0.13, numMaxScore+0.08])
+                                            numMinScore-0.13, numMaxScore+0.08],
+                                    rasterized=True)
+
+        numOutlineMinEpiScore = numMinTCGAEpiScore-0.02
+        numOutlineWidth = 0.1 - numOutlineMinEpiScore
+        numOutlineHeight = numMaxTCGAMesScore+0.02 - 0.15
+        handAxIn.add_patch(
+            matplotlib.patches.Rectangle(
+                [numOutlineMinEpiScore, 0.15],
+                numOutlineWidth, numOutlineHeight,
+                edgecolor='w', lw=1.,
+                facecolor=None, fill=False,
+                zorder=numScatterZOrder-2))
+        handAxIn.add_patch(
+            matplotlib.patches.Rectangle(
+                [numOutlineMinEpiScore, 0.15],
+                numOutlineWidth, numOutlineHeight,
+                edgecolor='r', lw=0.5,
+                facecolor=None, fill=False,
+                zorder=numScatterZOrder-2))
 
         for iCellLine in range(np.shape(dfCCLEScores)[0]):
             strCellLine = dfCCLEScores.index.tolist()[iCellLine]
@@ -1052,8 +1075,9 @@ class PlotFunc:
 
             plt.scatter(dfCCLEScores['Epithelial Score'].iloc[iCellLine],
                         dfCCLEScores['Mesenchymal Score'].iloc[iCellLine],
-                        c=strColor, marker='^', s=25,
-                        edgecolors=['k'],
+                        c=strColor, marker='^', s=30,
+                        edgecolors=['black'],
+                        linewidths=0.5,
                         zorder=numScatterZOrder)
 
         for iSampleSet in range(len(listSamplesToPlot)):
@@ -1064,7 +1088,8 @@ class PlotFunc:
             for strSample in listLocalSamplesToPlot:
                 plt.scatter(dfLocalScores['Epithelial Score'].loc[strSample],
                             dfLocalScores['Mesenchymal Score'].loc[strSample],
-                            c='g', marker='^', s=25, edgecolors=['k'],
+                            c='g', marker='^', s=30, edgecolors=['black'],
+                            linewidths=0.5,
                             zorder=numScatterZOrder+1)
             strLineShort = strSampleSet.split('_')[0]
             strCondShort = strSampleSet.partition('_')[2]
@@ -1077,27 +1102,29 @@ class PlotFunc:
             numMeanMesScore = np.mean(
                 dfLocalScores['Mesenchymal Score'].reindex(listLocalSamplesToPlot).values.astype(float))
 
-            # handAxIn.annotate(
-            #     strLine + '\n' + strCond,
-            #     xy=(numMeanEpiScore, numMeanMesScore), xycoords='data',
-            #     xytext=(numMeanEpiScore + dictOfDictOffsets[strLineShort][strCondShort][0],
-            #             numMeanMesScore + dictOfDictOffsets[strLineShort][strCondShort][1]),
-            #     textcoords='data',
-            #     size=Plot.numFontSize*0.7, annotation_clip=False,
-            #     horizontalalignment='center', verticalalignment='center', zorder=6,
-            #     bbox=dict(boxstyle="round", fc='w', ec=(0.6, 0.6, 0.6), lw=2, alpha=1.0),
-            #     arrowprops=dict(arrowstyle="wedge,tail_width=0.6",
-            #                     fc=(1.0, 1.0, 1.0), ec=(0.6, 0.6, 0.6),
-            #                     patchA=None,
-            #                     relpos=(0.5, 0.5),
-            #                     connectionstyle="arc3", lw=2, alpha=0.7, zorder=6)
-            # )
+            handAxIn.annotate(
+                strLine + '\n' + strCond,
+                xy=(numMeanEpiScore, numMeanMesScore), xycoords='data',
+                xytext=(numMeanEpiScore + dictOfDictOffsets[strLineShort][strCondShort][0],
+                        numMeanMesScore + dictOfDictOffsets[strLineShort][strCondShort][1]),
+                textcoords='data',
+                size=Plot.numFontSize*0.7, annotation_clip=False,
+                horizontalalignment='center', verticalalignment='center', zorder=numScatterZOrder-1,
+                bbox=dict(boxstyle="round", fc='w', ec=(0.6, 0.6, 0.6), lw=2, alpha=1.0),
+                arrowprops=dict(arrowstyle="wedge,tail_width=0.6",
+                                fc=(1.0, 1.0, 1.0), ec=(0.6, 0.6, 0.6),
+                                patchA=None,
+                                relpos=(0.5, 0.5),
+                                connectionstyle="arc3", lw=2, alpha=0.7, zorder=6)
+            )
 
-        handAxIn.set_xlim([numMinScore-0.10, numMaxScore+0.05])
-        handAxIn.set_ylim([numMinScore-0.10, numMaxScore+0.05])
+        numMinLimit = numMinScore-0.04
+        numMaxLimit = numMaxScore+0.03
+        handAxIn.set_xlim([numMinLimit, numMaxLimit])
+        handAxIn.set_ylim([numMinLimit, numMaxLimit])
 
-        handAxIn.set_ylabel('Mesenchymal score', fontsize=Plot.numFontSize*0.7)
-        handAxIn.set_xlabel('Epithelial score', fontsize=Plot.numFontSize*0.7)
+        handAxIn.set_ylabel('Mesenchymal score', fontsize=Plot.numFontSize*1.2)
+        handAxIn.set_xlabel('Epithelial score', fontsize=Plot.numFontSize*1.2)
 
         for handTick in handAxIn.xaxis.get_major_ticks():
             handTick.label.set_fontsize(Plot.numFontSize*0.7)
@@ -1105,106 +1132,113 @@ class PlotFunc:
         for handTick in handAxIn.yaxis.get_major_ticks():
             handTick.label.set_fontsize(Plot.numFontSize*0.7)
 
-            # tidy up the tick locations
+        # tidy up the tick locations
         arrayXTickLoc = plt.MaxNLocator(numMaxXTicks)
         handAxIn.xaxis.set_major_locator(arrayXTickLoc)
-
 
         arrayYTickLoc = plt.MaxNLocator(numMaxYTicks)
         handAxIn.yaxis.set_major_locator(arrayYTickLoc)
 
+        numLegendPanelXStart = numMinLimit+0.01
+        numLegendPanelYStart = numMinLimit+0.03
+        numLegendPanelWidth = 0.29
+        numLegendPanelHeight = 0.22
+
         arrayHexBinPlotPos = handAxIn.get_position()
-        numColorBarXStart = arrayHexBinPlotPos.x0 + 0.03*arrayHexBinPlotPos.width
-        numColorBarYStart = arrayHexBinPlotPos.y0 + 0.05*arrayHexBinPlotPos.height
+        numColorBarXStart = arrayHexBinPlotPos.x0 + 0.035
+        numColorBarYStart = arrayHexBinPlotPos.y0 + 0.03
 
-        numLegendPanelXStart = numMinScore-0.095
-        numLegendPanelYStart = numMinScore-0.095
-        numLegendPanelWidth = 0.30
-        numLegendPanelHeight = 0.24
+        numColorBarLabelXPos = numLegendPanelXStart + 0.2*numLegendPanelWidth
+        numColorBarLabelYPos = numLegendPanelYStart + 0.9*numLegendPanelHeight
 
-        numColorBarLabelXPos = numMinScore - 0.03
-        numColorBarLabelYPos = numMinScore + 0.11
-
-        numScatterLabelXPos = numMinScore + 0.11
+        numScatterLabelXPos = numLegendPanelXStart + 0.70*numLegendPanelWidth
         numScatterLabelYPos = numColorBarLabelYPos
 
-        numScatterLegendXPos = numMinScore + 0.05
-        numScatterLegendYPos = numMinScore + 0.10
+        numScatterLegendXPos = numLegendPanelXStart + 0.48*numLegendPanelWidth
+        numScatterLegendYPos = numLegendPanelYStart + 0.88*numLegendPanelHeight
 
-        numScatterLegendYSpacing = 0.045*(numMaxScore - numMinScore)
-
-        numScatterLegendHMLESystemXOffset = 0.015 * (numMaxScore - numMinScore)
         numScatterLegendTextXOffset = 0.015
-        numScatterLegendTextYOffset = -0.03
+        numScatterLegendTextYOffset = -0.027
 
-        # # draw in a patch (white bounding box) as the background for the legend
-        # handPatch = handAxIn.add_patch(matplotlib.patches.Rectangle([numLegendPanelXStart, numLegendPanelYStart],
-        #                                               numLegendPanelWidth, numLegendPanelHeight,
-        #                                               edgecolor='k', lw=1.,
-        #                                               facecolor='w', fill=True))
-        # handPatch.set_zorder(numScatterZOrder+1)
-        # handAxIn.text(numLegendPanelXStart + 0.25*numLegendPanelWidth,
-        #             numLegendPanelYStart + 0.40*numLegendPanelHeight,
-        #             'log$_{10}$($n_{tumours}$)',
-        #             fontsize=Plot.numFontSize*0.7,
-        #             ha='center', va='center',
-        #             rotation=90, zorder=numScatterZOrder+3)
-        #
-        # arrayCBarPos=handFigIn.add_axes([numColorBarXStart,numColorBarYStart,0.02,0.08])
-        # handSigColorBar = handFigIn.colorbar(handAxHex,cax=arrayCBarPos)
-        # handSigColorBar.ax.tick_params(labelsize=Plot.numFontSize*0.7)
-        #
-        # arrayTickLoc = plt.MaxNLocator(5)
-        # handSigColorBar.locator = arrayTickLoc
-        # handSigColorBar.update_ticks()
-        #
-        # listOutTickLabels = ['']*5
-        # listOutTickLabels[0] = 'Low'
-        # listOutTickLabels[-1] = 'High'
-        #
-        # handSigColorBar.ax.set_yticklabels(listOutTickLabels)
+        # draw in a patch (white bounding box) as the background for the legend
+        handPatch = handAxIn.add_patch(
+            matplotlib.patches.Rectangle(
+                [numLegendPanelXStart, numLegendPanelYStart],
+                numLegendPanelWidth, numLegendPanelHeight,
+                edgecolor='k', lw=1.,
+                facecolor='w', fill=True))
+        handPatch.set_zorder(numScatterZOrder+1)
+        handAxIn.text(numLegendPanelXStart + 0.05*numLegendPanelWidth,
+                    numLegendPanelYStart + 0.40*numLegendPanelHeight,
+                    'log$_{10}$($n_{tumours}$)',
+                    fontsize=Plot.numFontSize*0.7,
+                    ha='center', va='center',
+                    rotation=90, zorder=numScatterZOrder+3)
 
-        #
-        # handAxIn.text(numColorBarLabelXPos, numColorBarLabelYPos,
-        #               'TCGA sample\ndensity',
-        #             fontsize=Plot.numFontSize*0.7, horizontalalignment='center', verticalalignment='center',
-        #             weight='bold', zorder=numScatterZOrder+3)
-        # handAxIn.text(numScatterLabelXPos, numScatterLabelYPos,
-        #               'Cell line\nclassification',
-        #             fontsize=Plot.numFontSize*0.7, horizontalalignment='center', verticalalignment='center',
-        #             weight='bold', zorder=numScatterZOrder+3)
-        #
-        # for iType in range(numCellLineSubtypes):
-        #     handAxIn.scatter(numScatterLegendXPos,
-        #                      numScatterLegendYPos+numScatterLegendTextYOffset*(iType+1),
-        #                      c=listSubtypePlotColors[iType],
-        #                      clip_on=False,
-        #                      marker='^',
-        #                      s=numCellLineMarkerSize, edgecolor='k',
-        #                      lw=numCellLineMarkerLineWidth,
-        #                      zorder=numScatterZOrder+3)
-        #     handAxIn.text(numScatterLegendXPos+numScatterLegendTextXOffset,
-        #                   numScatterLegendYPos+numScatterLegendTextYOffset*(iType+1),
-        #                   listCellLineSubtypesToDisp[iType],
-        #                   fontsize=Plot.numFontSize*0.7,
-        #                   verticalalignment='center',
-        #                   horizontalalignment='left',
-        #                   zorder=numScatterZOrder+3)
-        # handAxIn.scatter(numScatterLegendXPos,
-        #                  numScatterLegendYPos + numScatterLegendTextYOffset * (numCellLineSubtypes + 1),
-        #                  c='g',
-        #                  clip_on=False,
-        #                  marker='^',
-        #                  s=numCellLineMarkerSize, edgecolor='k',
-        #                  lw=numCellLineMarkerLineWidth,
-        #                  zorder=numScatterZOrder + 3)
-        # handAxIn.text(numScatterLegendXPos + numScatterLegendTextXOffset,
-        #               numScatterLegendYPos + numScatterLegendTextYOffset * (numCellLineSubtypes + 1),
-        #               'EpiCRISPR samples',
-        #               fontsize=Plot.numFontSize * 0.7,
-        #               verticalalignment='center',
-        #               horizontalalignment='left',
-        #               zorder=numScatterZOrder + 3)
+        handCBarPos=handFigIn.add_axes([numColorBarXStart, numColorBarYStart,
+                                         0.01, 0.08])
+        handSigColorBar = handFigIn.colorbar(handAxHex, cax=handCBarPos)
+        handSigColorBar.ax.tick_params(labelsize=Plot.numFontSize*0.7,
+                                       length=0.25, width=0.1)
+
+        handSigColorBar.ax.set_yticklabels([])
+        structCBarPos = handCBarPos.get_position()
+        handFigIn.text(structCBarPos.x0 + 3.5*structCBarPos.width,
+                       structCBarPos.y0 + 0.95*structCBarPos.height,
+                       'Most\ntumors',
+                       ha='center', va='center',
+                       fontsize=Plot.numFontSize*0.7,
+                       fontstyle='italic')
+        handFigIn.text(structCBarPos.x0 + 3.5*structCBarPos.width,
+                       structCBarPos.y0 + 0.05*structCBarPos.height,
+                       'No\ntumors',
+                       ha='center', va='center',
+                       fontsize=Plot.numFontSize*0.7,
+                       fontstyle='italic')
+
+        for strAxLoc in ['bottom', 'left', 'right', 'top']:
+            handSigColorBar.ax.spines[strAxLoc].set_linewidth(0.1)
+
+        handAxIn.text(numColorBarLabelXPos, numColorBarLabelYPos,
+                      'TCGA sample\ndensity',
+                    fontsize=Plot.numFontSize*0.7, horizontalalignment='center', verticalalignment='center',
+                    weight='bold', zorder=numScatterZOrder+3)
+        handAxIn.text(numScatterLabelXPos, numScatterLabelYPos,
+                      'Cell line\nclassification',
+                    fontsize=Plot.numFontSize*0.7, horizontalalignment='center', verticalalignment='center',
+                    weight='bold', zorder=numScatterZOrder+3)
+
+        for iType in range(numCellLineSubtypes):
+            handAxIn.scatter(numScatterLegendXPos,
+                             numScatterLegendYPos+numScatterLegendTextYOffset*(iType+1),
+                             c=listSubtypePlotColors[iType],
+                             clip_on=False,
+                             marker='^',
+                             s=numCellLineMarkerSize, edgecolor='k',
+                             lw=numCellLineMarkerLineWidth,
+                             zorder=numScatterZOrder+3)
+            handAxIn.text(numScatterLegendXPos+numScatterLegendTextXOffset,
+                          numScatterLegendYPos+numScatterLegendTextYOffset*(iType+1),
+                          listCellLineSubtypesToDisp[iType],
+                          fontsize=Plot.numFontSize*0.7,
+                          verticalalignment='center',
+                          horizontalalignment='left',
+                          zorder=numScatterZOrder+3)
+        handAxIn.scatter(numScatterLegendXPos,
+                         numScatterLegendYPos + numScatterLegendTextYOffset * (numCellLineSubtypes + 1),
+                         c='g',
+                         clip_on=False,
+                         marker='^',
+                         s=numCellLineMarkerSize, edgecolor='k',
+                         lw=numCellLineMarkerLineWidth,
+                         zorder=numScatterZOrder + 3)
+        handAxIn.text(numScatterLegendXPos + numScatterLegendTextXOffset,
+                      numScatterLegendYPos + numScatterLegendTextYOffset * (numCellLineSubtypes + 1),
+                      'EpiCRISPR samples',
+                      fontsize=Plot.numFontSize * 0.7,
+                      verticalalignment='center',
+                      horizontalalignment='left',
+                      zorder=numScatterZOrder + 3)
 
         return flagResult
 
@@ -1366,6 +1400,36 @@ class PlotFunc:
 
         return flagResult
 
+    def tcga_histograms(flagResult=False,
+                        arrayGridSpecIn=[],
+                        listGenesToPlot=[]):
+
+
+        numOutGeneRow = 0
+        numOutGeneCol = 0
+        for iGene in range(len(listGenesToPlot)):
+            strOutGene = listGenesToPlot[iGene]
+            handAx = plt.subplot(arrayGridSpecIn[numOutGeneRow, numOutGeneCol])
+            if numOutGeneCol == 0:
+                flagLabelY = True
+            else:
+                flagLabelY = False
+            if numOutGeneRow == 2:
+                flagLabelX = True
+            else:
+                flagLabelX = False
+
+            _ = PlotFunc.tcga_sel_gene_hist(handAxIn=handAx,
+                                            strGeneIn=strOutGene,
+                                            flagLabelYAxis=flagLabelY,
+                                            flagLabelXAxis=flagLabelX)
+            numOutGeneCol += 1
+            if numOutGeneCol >= 2:
+                numOutGeneRow += 1
+                numOutGeneCol=0
+
+        return flagResult
+
     def tcga_sel_gene_hist(flagResult=False,
                            handAxIn='undefined',
                            strGeneIn='undefined',
@@ -1391,19 +1455,19 @@ class PlotFunc:
         strTCGAGene = [strGene for strGene in dfTCGABrCa.index.tolist()
                        if strGene.startswith(strGeneIn+'|')][0]
 
-        sliceData = dfTCGABrCa.loc[strTCGAGene]
+        sliceData = np.log2(dfTCGABrCa.loc[strTCGAGene]+1)
         numMinVal = np.min(sliceData.values.astype(float))
         numMaxVal = np.max(sliceData.values.astype(float))
         numRange = numMaxVal - numMinVal
 
         arrayHistBins = np.linspace(start=numMinVal-0.05*numRange,
                                     stop=numMaxVal+0.05*numRange,
-                                    num=30)
+                                    num=20)
 
         handAxIn.hist(sliceData[listOtherSamples].values.astype(float),
                       bins=arrayHistBins,
                       zorder=4,
-                      alpha=0.7,
+                      alpha=0.8,
                       color='0.6')
         handAxIn.set_xlim([numMinVal-0.05*numRange, numMaxVal+0.05*numRange])
 
@@ -1415,20 +1479,27 @@ class PlotFunc:
         handAx2.hist(sliceData[listSampleOfInt].values.astype(float),
                      bins=arrayHistBins,
                      zorder=5,
-                     alpha=0.7,
+                     alpha=0.5,
                      color='#ec1c24')
         handAx2.set_xlim([numMinVal-0.05*numRange, numMaxVal+0.05*numRange])
+
         handAx2.tick_params(axis='y', labelsize=Plot.numFontSize*0.7, labelcolor='#ec1c24')
         # for handTick in handAx2.yaxis.get_major_ticks():
         #     handTick.label.set_fontsize(Plot.numFontSize*0.7)
 
-        handAxIn.set_title(strGeneIn, fontsize=Plot.numFontSize*0.7)
+        handAxIn.set_title(strGeneIn, fontsize=Plot.numFontSize, fontstyle='italic')
+
+        handAxIn.spines['top'].set_visible(False)
+        handAx2.spines['top'].set_visible(False)
+
+        for strAxLoc in ['bottom', 'left', 'right', 'top']:
+            handAxIn.spines[strAxLoc].set_linewidth(0.1)
 
         if flagLabelXAxis:
-            handAxIn.set_xlabel('Abundance', fontsize=Plot.numFontSize*0.7)
+            handAxIn.set_xlabel('Abundance\n(log$_{2}$(TPM+1))', fontsize=Plot.numFontSize)
 
         if flagLabelYAxis:
-            handAxIn.set_ylabel('Frequency', fontsize=Plot.numFontSize*0.7)
+            handAxIn.set_ylabel('Frequency', fontsize=Plot.numFontSize)
 
         return flagResult
 
@@ -1586,18 +1657,23 @@ class Plot:
             nrows=3, ncols=2,
             left=0.65, right=0.95,
             bottom=0.05, top=0.38,
-            hspace=0.50, wspace=0.65
+            hspace=0.60, wspace=0.65
         )
 
-        numABYPos = 0.93
-        numFig5YPos = 0.95
+        numABStrYPos = 0.93
+        numACStrXPos = 0.02
+
+        numDStrXPos = 0.61
+        numCDStrYPos = 0.40
+
+        numFig5StrYPos = 0.95
 
         dictPanelLoc = {'Volcano:MDA-MB-231':[0.09, 0.90-numVolcanoHeight, numVolcanoWidth, numVolcanoHeight],
                         'Volcano:SUM159':[0.09, 0.48, numVolcanoWidth, numVolcanoHeight],
                         'HeatMap:RNA-seq':[0.64, 0.47, 0.14, numHeatMapPanelHeight],
                         'HeatMap_cmap:RNA-seq':[0.66, 0.455, 0.10, numCMapHeight],
                         'HeatMap:RNA-seq_GO':[0.79, 0.47, 0.18, numHeatMapPanelHeight],
-                        'Hexbin_Landscape':[0.07, 0.05, numHexbinWidth, numHexbinHeight]
+                        'Hexbin_Landscape':[0.08, 0.05, numHexbinWidth, numHexbinHeight]
                         }
 
         handFig = plt.figure(figsize=tupleFigSize)
@@ -1610,16 +1686,15 @@ class Plot:
         handAxSUM159 = handFig.add_axes(dictPanelLoc['Volcano:SUM159'])
         _ = PlotFunc.epi_mes_volcano(handAxInMDAMB231=handAxMDAMB231,
                                      handAxInSUM159=handAxSUM159)
-        structAxPos = handAxMDAMB231.get_position()
-        handFig.text(structAxPos.x0-0.15*structAxPos.width,
-                     numABYPos,
+        handFig.text(numACStrXPos,
+                     numABStrYPos,
                      'a',
                      ha='left',
                      va='center',
                      fontsize=Plot.numFontSize*1.5,
                      fontweight='bold')
-        handFig.text(structAxPos.x0-0.15*structAxPos.width,
-                     numFig5YPos,
+        handFig.text(numACStrXPos,
+                     numFig5StrYPos,
                      'Fig. 5',
                      ha='left',
                      va='center',
@@ -1637,7 +1712,7 @@ class Plot:
                                               handAxInAnnot=handAxAnnot)
         structAxPos = handAxHeatmap.get_position()
         handFig.text(structAxPos.x0-0.5*structAxPos.width,
-                     numABYPos,
+                     numABStrYPos,
                      'b',
                      ha='left',
                      va='center',
@@ -1648,35 +1723,30 @@ class Plot:
         # Hexbin landscape
         handAx = handFig.add_axes(dictPanelLoc['Hexbin_Landscape'])
 
-        _ = PlotFunc.es_ms_landscape(handAxIn=handAx)
+        _ = PlotFunc.es_ms_landscape(handAxIn=handAx,
+                                     handFigIn=handFig)
+        handFig.text(numACStrXPos,
+                     numCDStrYPos,
+                     'c',
+                     ha='left',
+                     va='center',
+                     fontsize=Plot.numFontSize*1.5,
+                     fontweight='bold')
 
         # # # # # # # # #       #       #       #       #       #       #
         # Histograms
-        listOutGenes = ['ZEB1', 'ESRP1',
-                        'F11R', 'MAP7',
-                        'CDS1', 'SH2D3A']
-        numOutGeneRow = 0
-        numOutGeneCol = 0
-        for iGene in range(len(listOutGenes)):
-            strOutGene = listOutGenes[iGene]
-            handAx = plt.subplot(arrayGridSpec[numOutGeneRow, numOutGeneCol])
-            if numOutGeneCol == 0:
-                flagLabelY = True
-            else:
-                flagLabelY = False
-            if numOutGeneRow == 2:
-                flagLabelX = True
-            else:
-                flagLabelX = False
 
-            _ = PlotFunc.tcga_sel_gene_hist(handAxIn=handAx,
-                                            strGeneIn=strOutGene,
-                                            flagLabelYAxis=flagLabelY,
-                                            flagLabelXAxis=flagLabelX)
-            numOutGeneCol += 1
-            if numOutGeneCol >= 2:
-                numOutGeneRow += 1
-                numOutGeneCol=0
+        _ = PlotFunc.tcga_histograms(
+            arrayGridSpecIn=arrayGridSpec,
+            listGenesToPlot=['ZEB1', 'ESRP1', 'F11R', 'MAP7', 'CDS1', 'SH2D3A'])
+        handFig.text(numDStrXPos,
+                     numCDStrYPos,
+                     'd',
+                     ha='left',
+                     va='center',
+                     fontsize=Plot.numFontSize*1.5,
+                     fontweight='bold')
+
 
         pathOut = os.path.join(Plot.strOutputLoc, 'figure_5')
         for strFormat in Plot.listFileFormats:
