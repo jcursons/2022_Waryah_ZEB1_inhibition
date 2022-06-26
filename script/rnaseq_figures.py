@@ -434,16 +434,11 @@ class Process:
 
         # we want to end up with a reasonable number for display
         # --> set a maximum but it may be slightly lower as we filter on prior gene annotations
-        numMaxGenes = 60
+        numMaxGenes = 40
 
         # load dictionaries for mapping between ENSG and HGNC
         dictENSGToHGNC = Process.dict_gtf_ensg_to_hgnc()
         dictHGNCToENSG = dict(zip(dictENSGToHGNC.values(), dictENSGToHGNC.keys()))
-
-        # load some prior annotations of epithelial and mesenchymal genes
-        dictEpiMesGenes = Process.tan2012_cell_line_genes()
-        listEpiGenesENSG = [dictHGNCToENSG[strGene] for strGene in dictEpiMesGenes['epi_genes']]
-        listMesGenesENSG = [dictHGNCToENSG[strGene] for strGene in dictEpiMesGenes['mes_genes']]
 
         # load the data
         dfMergedRNA = Process.diff_expr_data()
@@ -482,23 +477,16 @@ class Process:
         arraySortedByProdRank = np.argsort(arrayProdRankAcrossCond)
         listSortedByProdRank = [listSigInEitherLine[i] for i in arraySortedByProdRank]
 
-        listMesInList = list(set(listSigInEitherLine).intersection(listMesGenesENSG))
-        listEpiInList = list(set(listSigInEitherLine).intersection(listEpiGenesENSG))
-
         # ZEB1 inactivation tends to drive increases in gene expression (mainly epithelial genes)
         #  so weight this towards up-regulated genes
-        numFromProdRank = numMaxGenes - len(listMesInList + listEpiInList)
+        numFromProdRank = numMaxGenes
         numUpGenes = int((2/3)*numFromProdRank)
         numDownGenes = int((1/3)*numFromProdRank)
 
-        # listSortedByProdRankHGNC = [dictENSGToHGNC[strGene] for strGene in listSortedByProdRank
-        #                             if strGene in dictENSGToHGNC.keys()]
         listOutputDownGenes = listSortedByProdRank[0:numDownGenes]
         listOutputUpGenes = listSortedByProdRank[-numUpGenes:]
 
         listOutputGeneOrder = listOutputDownGenes + \
-                              list(set(listMesInList).difference(set(listOutputDownGenes))) + \
-                              list(set(listEpiInList).difference(set(listOutputUpGenes))) + \
                               listOutputUpGenes
 
         return {'HeatmapOrder':listOutputGeneOrder,
@@ -922,7 +910,7 @@ class Process:
 
         else:
             dfGOMemb = pd.read_table(os.path.join(PathDir.pathRefData, strOutputSaveFile),
-                                     sep='\t')
+                                     sep='\t', index_col=0)
 
         return dfGOMemb
 
@@ -1303,27 +1291,33 @@ class PlotFunc:
         handAxInMDAMB231.spines['right'].set_visible(False)
         handAxInMDAMB231.spines['top'].set_visible(False)
 
+
+        listSigGenes = [dfMergedRNA.index.tolist()[i] for i in
+                        np.where(dfMergedRNA['MDAMB231:adj.P.Val'].values.astype(float) < 1E-10)[0]]
+
+        listGenesToLabel = list(set(
+            [strGene for strGene in listOutputGeneOrder
+             if np.bitwise_and(dfMergedRNA['MDAMB231:adj.P.Val'].loc[strGene].astype(float) < numAdjPValThresh,
+                               strGene in listEpiGenesENSG+listMesGenesENSG)] + \
+            listSigGenes))
+
+
         listHandTextMDAMB231 = [handAxInMDAMB231.text(
             dfMergedRNA['MDAMB231:logFC'].loc[strGene].astype(float),
             -np.log10(dfMergedRNA['MDAMB231:adj.P.Val'].loc[strGene].astype(float)),
             dictENSGToHGNC[strGene],
             fontsize=Plot.numFontSize,
             ha='center')
-            for strGene in listOutputGeneOrder
-            if np.bitwise_and(dfMergedRNA['MDAMB231:adj.P.Val'].loc[strGene].astype(float) < numAdjPValThresh,
-                              strGene in listEpiGenesENSG+listMesGenesENSG)]
+            for strGene in listGenesToLabel]
         adjust_text(listHandTextMDAMB231,
-                    arrowprops=dict(arrowstyle='-|>,head_width=0.1,head_length=0.2',
-                                    color='k', lw=0.5,
-                                    connectionstyle="arc3",
-                                    alpha=0.25),
+                    #arrowprops=dict(arrowstyle=None)
                     )
 
         handAxInMDAMB231.set_xticks([-5, -2.5, 0, 2.5, 5])
 
         handAxInMDAMB231.set_ylabel('-log$_{10}$(adj. $p$-value)', fontsize=Plot.numFontSize)
         handAxInMDAMB231.set_xlabel('log$_{2}$(fold change)', fontsize=Plot.numFontSize)
-        handAxInMDAMB231.set_title('MDA-MB-231', fontsize=Plot.numFontSize)
+        handAxInMDAMB231.set_title('MDA-MB-231', fontsize=Plot.numFontSize*1.25)
 
         for handTick in handAxInMDAMB231.yaxis.get_major_ticks():
             handTick.label.set_fontsize(Plot.numFontSize)
@@ -1361,6 +1355,16 @@ class PlotFunc:
                                zorder=4)
         handAxInSUM159.set_xlim([arrayMaxAbsLogFC*-1.05, arrayMaxAbsLogFC*1.05])
 
+        listSigGenes = [dfMergedRNA.index.tolist()[i] for i in
+                        np.where(dfMergedRNA['SUM159:adj.P.Val'].values.astype(float) < 1E-6)[0]]
+
+        listGenesToLabel = list(set(
+            [strGene for strGene in listOutputGeneOrder
+             if np.bitwise_and(dfMergedRNA['SUM159:adj.P.Val'].loc[strGene].astype(float) < numAdjPValThresh,
+                               strGene in listEpiGenesENSG+listMesGenesENSG)] + \
+            listSigGenes))
+
+
 
         listHandTextSUM159 = [handAxInSUM159.text(
             dfMergedRNA['SUM159:logFC'].loc[strGene].astype(float),
@@ -1368,16 +1372,14 @@ class PlotFunc:
             dictENSGToHGNC[strGene],
             fontsize=Plot.numFontSize,
             ha='center')
-            for strGene in listOutputGeneOrder
-            if np.bitwise_and(dfMergedRNA['SUM159:adj.P.Val'].loc[strGene].astype(float) < numAdjPValThresh,
-                              strGene in listEpiGenesENSG+listMesGenesENSG)]
+            for strGene in listGenesToLabel]
         adjust_text(listHandTextSUM159,
-                    arrowProps=dict(arrowstyle=None)
+                    #arrowProps=dict(arrowstyle=None)
                     )
 
         handAxInSUM159.set_xlabel('log$_{2}$(fold change)', fontsize=Plot.numFontSize)
         handAxInSUM159.set_ylabel('-log$_{10}$(adj. $p$-value)', fontsize=Plot.numFontSize)
-        handAxInSUM159.set_title('SUM159', fontsize=Plot.numFontSize)
+        handAxInSUM159.set_title('SUM159', fontsize=Plot.numFontSize*1.25)
 
         # hide the right and top spines
         handAxInSUM159.spines['right'].set_visible(False)
@@ -1516,7 +1518,8 @@ class PlotFunc:
                        'GO:0005911':'Cell-cell junction'}
         listOutputSelGO = list(dictGOLabel.keys())
 
-        listTFs = Process.transcription_factors()
+        dfTFs = Process.transcription_factors()
+        listTFsHGNC = dfTFs['ENSG'].values.tolist()
         dictEpiMes = Process.tan2012_cell_line_genes()
 
         dictENSGToHGNC = Process.dict_gtf_ensg_to_hgnc()
@@ -1593,7 +1596,7 @@ class PlotFunc:
         dfGeneOntology = Process.go_rnaseq_diffexpr_genes()
         listOutputGeneOrderHGNC = [dictENSGToHGNC[strGene] for strGene in listOutputGeneOrder]
         dfGeneAnnot = dfGeneOntology[listOutputSelGO].reindex(listOutputGeneOrderHGNC)
-        dfGeneAnnot['Transcription factor'] = pd.Series([strGene in listTFs for strGene in listOutputGeneOrder],
+        dfGeneAnnot['Transcription factor'] = pd.Series([strGene in listTFsHGNC for strGene in listOutputGeneOrderHGNC],
                                       index=listOutputGeneOrderHGNC)
         dfGeneAnnot['Epithelial gene'] = pd.Series([strGene in dictEpiMes['epi_genes'] for strGene in listOutputGeneOrderHGNC],
                                       index=listOutputGeneOrderHGNC)
