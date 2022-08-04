@@ -54,7 +54,7 @@ class Process:
 
     def quant_data(flagResult=False):
 
-        strQuantFile = 'Waryah_Oct2017_ZEB1-epiCRISPR_QuantGeneLevel_lengthScaledTPM.csv'
+        strQuantFile = 'Waryah_ZEB1-epiCRISPR_QuantGeneLevel_lengthScaledTPM.csv'
 
         dfData = pd.read_table(os.path.join(PathDir.pathProcRNAData, strQuantFile),
                                sep=',', header=0, index_col=0)
@@ -976,7 +976,7 @@ class PlotFunc:
 
         dictLineLabel = {'SUM159':'SUM159',
                          'MDAMB231':'MDA-MB-231'}
-        dictCondLabel = {'EVC': 'Empty vector',
+        dictCondLabel = {'EVC': 'No gRNA',
                          'gAll': 'All gRNAs'}
 
         dictOfDictOffsets = {'SUM159': {},
@@ -1158,7 +1158,7 @@ class PlotFunc:
         handPatch.set_zorder(numScatterZOrder+1)
         handAxIn.text(numLegendPanelXStart + 0.05*numLegendPanelWidth,
                     numLegendPanelYStart + 0.40*numLegendPanelHeight,
-                    'log$_{10}$($n_{tumours}$)',
+                    'log$_{10}$($n_{tumors}$)',
                     fontsize=Plot.numFontSize*0.7,
                     ha='center', va='center',
                     rotation=90, zorder=numScatterZOrder+3)
@@ -1911,9 +1911,54 @@ class Plot:
 
         return flagResult
 
-# _ = Process.all_epi_mes_scores()
-_ = Plot.figure_five()
 
+class Output:
+
+    def merged_results(flagResult=False):
+
+        listFilesToMerge = ['voom-limma_MDAMB231_G4-EVC_diffExpr.csv',
+                            'voom-limma_MDAMB231_GAll-EVC_diffExpr.csv',
+                            'voom-limma_SUM159_G4-EVC_diffExpr.csv',
+                            'voom-limma_SUM159_GAll-EVC_diffExpr.csv']
+
+        listColsToDrop = ['AveExpr', 't', 'P.Value']
+
+        dictENSGToHGNC = Process.dict_gtf_ensg_to_hgnc()
+
+        listDFToMerge = []
+        for strFile in listFilesToMerge:
+            strCond = strFile.split('voom-limma_')[1].split('_diffExpr.csv')[0]
+            strLine = strCond.split('_')[0]
+            strComp = strCond.split('_')[1]
+            strComp = strComp.replace('EVC', 'NoGuide')
+            strCompClean = strComp.replace('-', '_vs_')
+            dfIn = pd.read_csv(os.path.join(PathDir.pathProcRNAData, strFile),
+                               sep=',', index_col=0, header=0)
+            dfIn.drop(columns=listColsToDrop, inplace=True)
+
+            listRenamedCol = [f'{strLine}_{strCompClean}:{strCol}' for strCol in dfIn.columns.tolist()]
+            dfIn.columns = listRenamedCol
+            listDFToMerge.append(dfIn)
+
+        dfMerged = pd.concat(listDFToMerge, axis=1, sort=True)
+        for strGene in set(dfMerged.index.tolist()).difference(set(dictENSGToHGNC.keys())):
+            dictENSGToHGNC[strGene] = 'failed_map'
+
+        listHGNC = [dictENSGToHGNC[strGene] for strGene in dfMerged.index.tolist()]
+
+        listColumns = dfMerged.columns.tolist()
+        dfMerged['HGNC'] = pd.Series(listHGNC, index=dfMerged.index.tolist())
+
+        dfMerged[['HGNC'] + listColumns].to_csv(os.path.join(PathDir.pathProcRNAData, 'MergedDiffExpr.tsv'),
+                                                sep='\t', header=True, index=True)
+
+        return flagResult
+
+# _ = Process.all_epi_mes_scores()
+# _ = Plot.figure_five()
+
+
+_ = Output.merged_results()
 
 
 
@@ -1949,8 +1994,6 @@ _ = Plot.figure_five()
 #     listOfListsConds=Process.listOfListsConds,
 #     dictOfDictXYOffsets=dictOfDictOffsets)
 
-
-# _ = Output.merged_results()
 
 # _ = Plot.heatmap()
 
