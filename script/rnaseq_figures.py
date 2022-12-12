@@ -1911,6 +1911,79 @@ class Plot:
 
         return flagResult
 
+    def emt_tfs(flagResult=False):
+
+        listTFs = ['ATF2', 'ATF3', 'ETS1', 'FOSL1',
+                   'FOXA1', 'FOXA2', 'FOXC2', 'FOXO4',
+                   'GRHL2', 'GSC', 'KLF8', 'MEF2C', 'MYC',
+                   'SNAI1', 'SNAI2', 'SOX9', 'TCF3', 'TCF4', 'TWIST1',
+                   'TWIST2', 'ZEB1', 'ZEB2']
+
+        # load dictionaries for mapping between ENSG and HGNC
+        dictENSGToHGNC = Process.dict_gtf_ensg_to_hgnc()
+        dictHGNCToENSG = dict(zip(dictENSGToHGNC.values(), dictENSGToHGNC.keys()))
+
+        listTFsENSG = [dictHGNCToENSG[strGene] for strGene in listTFs]
+
+        # load the data
+        dfMergedRNA = Process.diff_expr_data()
+        # listDataGenes = dfMergedRNA.index.tolist()
+        listDataColumns = dfMergedRNA.columns.tolist()
+        listPValCols = [strCol for strCol in listDataColumns if 'adj.P.Val' in strCol]
+        listCellLines = [strCol.split(':adj.P.Val')[0] for strCol in listPValCols]
+
+        listlogFCCols = [strCol for strCol in listDataColumns if ':logFC' in strCol]
+
+        dfTFRNA = dfMergedRNA.reindex(listTFsENSG).copy(deep=True)
+        dfTFRNA.index = listTFs
+
+        handFig = plt.figure(figsize=(6,4))
+
+        arrayLogFCData = dfTFRNA[listlogFCCols].values.astype(float)
+        numMaxAbsLogFC = np.max(np.abs(np.ravel(arrayLogFCData[~np.isnan(arrayLogFCData)])))
+
+        handAx = handFig.add_axes([0.25, 0.15, 0.70, 0.80])
+        handAx.matshow(arrayLogFCData,
+                       cmap=plt.cm.PRGn,
+                       vmin=-numMaxAbsLogFC,
+                       vmax=numMaxAbsLogFC,
+                       aspect='auto')
+
+        handAx.set_yticklabels([])
+        for iGene in range(len(listTFs)):
+            handAx.text(-0.55,
+                        iGene,
+                        listTFs[iGene],
+                        ha='right', va='center',
+                        fontstyle='italic',
+                        fontsize=5)
+
+        handAx.set_xticklabels([])
+        for iLine in range(len(listCellLines)):
+            handAx.text(iLine,
+                        len(listTFs)+1,
+                        listCellLines[iLine],
+                        ha='center', va='top',
+                        fontsize=5)
+
+        for iLine in range(len(listCellLines)):
+            strLine = listCellLines[iLine]
+            for iGene in range(len(listTFs)):
+                strTF = listTFs[iGene]
+                if np.isnan(dfTFRNA.loc[strTF, f'{strLine}:adj.P.Val']):
+                    handAx.scatter(iLine, iGene, marker='o', color='k', s=5)
+                else:
+                    if dfTFRNA.loc[strTF, f'{strLine}:adj.P.Val'].astype(float) < 0.05:
+                        a=1
+                    else:
+                        handAx.scatter(iLine, iGene, marker='o', color='k', s=5)
+
+        for strFormat in Plot.listFileFormats:
+            handFig.savefig(os.path.join(Plot.strOutputLoc, 'emt_tfs.' + strFormat),
+                            ext=strFormat, dpi=300)
+        plt.close(handFig)
+
+        return flagResult
 
 class Output:
 
@@ -1956,9 +2029,12 @@ class Output:
 
 # _ = Process.all_epi_mes_scores()
 # _ = Plot.figure_five()
+_ = Plot.emt_tfs()
+
+# _ = Output.merged_results()
 
 
-_ = Output.merged_results()
+
 
 
 
