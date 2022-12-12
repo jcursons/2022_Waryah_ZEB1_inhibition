@@ -88,3 +88,13 @@ For further details please see:
 
 - Data subsets used in the generation of Figure 6
 - Please contact Sepideh Foroutan for further information
+
+
+
+## Dependencies
+
+These scripts rely on some external dependencies.
+
+### python - pysingscore
+
+The python based implementation of singscore is used for gene set scoring in this manuscript. Installation instructions are available upon the Wiki: https://github.com/DavisLaboratory/PySingscore/wiki/Tutorial
