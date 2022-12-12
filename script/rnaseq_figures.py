@@ -1915,7 +1915,8 @@ class Plot:
 
         listTFs = ['ATF2', 'ATF3', 'ETS1', 'FOSL1',
                    'FOXA1', 'FOXA2', 'FOXC2', 'FOXO4',
-                   'GRHL2', 'GSC', 'KLF8', 'MEF2C', 'MYC',
+                   'GRHL2', 'GSC', 'KLF4', 'KLF8',
+                   'MEF2C', 'MYC', 'OVOL1', 'OVOL2',
                    'SNAI1', 'SNAI2', 'SOX9', 'TCF3', 'TCF4', 'TWIST1',
                    'TWIST2', 'ZEB1', 'ZEB2']
 
