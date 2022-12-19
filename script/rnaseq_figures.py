@@ -1913,71 +1913,119 @@ class Plot:
 
     def emt_tfs(flagResult=False):
 
-        listTFs = ['ATF2', 'ATF3', 'ETS1', 'FOSL1',
-                   'FOXA1', 'FOXA2', 'FOXC2', 'FOXO4',
-                   'GRHL2', 'GSC', 'KLF4', 'KLF8',
+        dictPanelPos = {'SUM159_Abund':[0.20, 0.72, 0.75, 0.15],
+                        'SUM159_logFC':[0.20, 0.55, 0.75, 0.075],
+                        'MDAMB231_Abund':[0.20, 0.25, 0.75, 0.15],
+                        'MDAMB231_logFC':[0.20, 0.08, 0.75, 0.075],
+                        'Legend_Abund':[0.25, 0.34, 0.08, 0.025],
+                        'Legend_logFC':[0.535, 0.34, 0.08, 0.025],
+                        'Legend_pVal':[0.82, 0.34, 0.08, 0.025]}
+
+        listTFs = ['ALX1', 'ATF2', 'ATF3', 'BACH1', 'ELK3', 'ETS1', 'FOSL1', 'FOSL2',
+                   'FOXA1', 'FOXA2', 'FOXC1', 'FOXC2', 'FOXF2', 'FOXG1', 'FOXK1', 'FOXM1', 'FOXO3', 'FOXO4', 'FOXQ1',
+                   'FOXN2',
+                   'GATA4', 'GATA6', 'GRHL2', 'GSC', 'JUNB', 'KLF4', 'KLF8', 'KLF10',
                    'MEF2C', 'MYC', 'OVOL1', 'OVOL2',
-                   'SNAI1', 'SNAI2', 'SOX9', 'TCF3', 'TCF4', 'TWIST1',
-                   'TWIST2', 'ZEB1', 'ZEB2']
+                   'PRRX1', 'RUNX1', 'RUNX2', 'SIX1', 'SNAI1', 'SNAI2', 'SNAI3',
+                   'SOX4', 'SOX9', 'SOX10', 'SOX11',
+                   'TBX1', 'TCF3', 'TCF4', 'TFAP2A',
+                   'TWIST1', 'TWIST2', 'WT1', 'ZBTB38', 'ZEB1', 'ZEB2']
+
+        listOtherFactors = ['ESRP1', 'ESRP2']
+
+        listGenesOfInt = listTFs + listOtherFactors
 
         # load dictionaries for mapping between ENSG and HGNC
         dictENSGToHGNC = Process.dict_gtf_ensg_to_hgnc()
         dictHGNCToENSG = dict(zip(dictENSGToHGNC.values(), dictENSGToHGNC.keys()))
 
-        listTFsENSG = [dictHGNCToENSG[strGene] for strGene in listTFs]
+        listGenesOfIntENSG = [dictHGNCToENSG[strGene] for strGene in listTFs + listOtherFactors]
 
-        # load the data
-        dfMergedRNA = Process.diff_expr_data()
+        dfAbund = Process.quant_data()
+        dfAbundOfInt = dfAbund.reindex(listGenesOfIntENSG).copy(deep=True)
+        dfAbundOfInt.index = listGenesOfInt
+
+        arrayAllAbundData = dfAbundOfInt.values.astype(float)
+        numMaxAbund = np.max(np.abs(np.ravel(arrayAllAbundData[~np.isnan(arrayAllAbundData)])))
+
+
+        # load the logFC data
+        dflogFC = Process.diff_expr_data()
         # listDataGenes = dfMergedRNA.index.tolist()
-        listDataColumns = dfMergedRNA.columns.tolist()
+        listDataColumns = dflogFC.columns.tolist()
         listPValCols = [strCol for strCol in listDataColumns if 'adj.P.Val' in strCol]
         listCellLines = [strCol.split(':adj.P.Val')[0] for strCol in listPValCols]
 
-        listlogFCCols = [strCol for strCol in listDataColumns if ':logFC' in strCol]
-
-        dfTFRNA = dfMergedRNA.reindex(listTFsENSG).copy(deep=True)
-        dfTFRNA.index = listTFs
+        dflogFCInt = dflogFC.reindex(listGenesOfIntENSG).copy(deep=True)
+        dflogFCInt.index = listGenesOfInt
 
         handFig = plt.figure(figsize=(6,4))
 
-        arrayLogFCData = dfTFRNA[listlogFCCols].values.astype(float)
-        numMaxAbsLogFC = np.max(np.abs(np.ravel(arrayLogFCData[~np.isnan(arrayLogFCData)])))
-
-        handAx = handFig.add_axes([0.25, 0.15, 0.70, 0.80])
-        handAx.matshow(arrayLogFCData,
-                       cmap=plt.cm.PRGn,
-                       vmin=-numMaxAbsLogFC,
-                       vmax=numMaxAbsLogFC,
-                       aspect='auto')
-
-        handAx.set_yticklabels([])
-        for iGene in range(len(listTFs)):
-            handAx.text(-0.55,
-                        iGene,
-                        listTFs[iGene],
-                        ha='right', va='center',
-                        fontstyle='italic',
-                        fontsize=5)
-
-        handAx.set_xticklabels([])
-        for iLine in range(len(listCellLines)):
-            handAx.text(iLine,
-                        len(listTFs)+1,
-                        listCellLines[iLine],
-                        ha='center', va='top',
-                        fontsize=5)
+        arrayAllLogFCData = dflogFCInt.values.astype(float)
+        numMaxAbsLogFC = np.max(np.abs(np.ravel(arrayAllLogFCData[~np.isnan(arrayAllLogFCData)])))
 
         for iLine in range(len(listCellLines)):
             strLine = listCellLines[iLine]
-            for iGene in range(len(listTFs)):
-                strTF = listTFs[iGene]
-                if np.isnan(dfTFRNA.loc[strTF, f'{strLine}:adj.P.Val']):
-                    handAx.scatter(iLine, iGene, marker='o', color='k', s=5)
+
+            if strLine == 'SUM159':
+                strBatch = 'B1'
+            elif strLine == 'MDAMB231':
+                strBatch = 'B2'
+
+            listAbundCols = [f'{strBatch}_{strLine}_EVC_{i+1}' for i in range(3)] + \
+                            [f'{strBatch}_{strLine}_gAll_{i+1}' for i in range(3)]
+
+            handAx = handFig.add_axes(dictPanelPos[f'{strLine}_Abund'])
+            handAx.matshow(dfAbundOfInt[listAbundCols].transpose().values.astype(float),
+                           cmap=plt.cm.viridis,
+                           vmin=0,
+                           vmax=numMaxAbund,
+                           aspect='auto')
+
+            handAx.set_yticks([])
+            handAx.set_xticks([])
+            handAx.set_yticklabels([])
+            handAx.set_xticklabels([])
+
+
+            handAx = handFig.add_axes(dictPanelPos[f'{strLine}_logFC'])
+            handAx.matshow(dflogFCInt[[f'{strLine}:logFC']].transpose().values.astype(float),
+                           cmap=plt.cm.PRGn,
+                           vmin=-numMaxAbsLogFC,
+                           vmax=numMaxAbsLogFC,
+                           aspect='auto')
+
+            handAx.set_yticks([])
+            handAx.set_xticks([])
+            handAx.set_yticklabels([])
+            handAx.set_xticklabels([])
+
+            # if iLine == 0:
+            strGeneLabelYPos = -1.05
+            # elif iLine == 1:
+            # strGeneLabelYPos = 1
+
+            for iGene in range(len(listGenesOfInt)):
+                handAx.text(iGene+0.5,
+                            strGeneLabelYPos,
+                            listGenesOfInt[iGene],
+                            rotation=90,
+                            ha='right', va='center',
+                            fontstyle='italic',
+                            fontsize=5)
+
+            for iGene in range(len(listGenesOfInt)):
+                strGene = listGenesOfInt[iGene]
+                if np.isnan(dflogFCInt.loc[strGene, f'{strLine}:adj.P.Val']):
+                    handAx.scatter(iGene, 0, marker='o', color='k', s=5)
                 else:
-                    if dfTFRNA.loc[strTF, f'{strLine}:adj.P.Val'].astype(float) < 0.05:
+                    if dflogFCInt.loc[strGene, f'{strLine}:adj.P.Val'].astype(float) < 0.05:
                         a=1
                     else:
-                        handAx.scatter(iLine, iGene, marker='o', color='k', s=5)
+                        handAx.scatter(iGene, 0, marker='o', color='k', s=5)
+
+
+        # handAx.text(0.01, )
 
         for strFormat in Plot.listFileFormats:
             handFig.savefig(os.path.join(Plot.strOutputLoc, 'emt_tfs.' + strFormat),
