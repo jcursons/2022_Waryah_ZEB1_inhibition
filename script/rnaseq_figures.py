@@ -1945,7 +1945,7 @@ class Plot:
                    'TBX1', 'TCF3', 'TCF4', 'TFAP2A',
                    'TWIST1', 'TWIST2', 'WT1', 'ZBTB38', 'ZEB1', 'ZEB2']
 
-        listOtherFactors = ['ESRP1', 'ESRP2']
+        listOtherFactors = ['CDH1', 'CDH2', 'ESRP1', 'ESRP2', 'VIM']
 
         listGenesOfInt = listTFs + listOtherFactors
 
@@ -2067,16 +2067,38 @@ class Plot:
             for axis in ['top', 'bottom', 'left', 'right']:
                 handAx.spines[axis].set_linewidth(0.5)
 
-            handCMapAx = handFig.add_axes(dictPanelPos['Legend_Abund'])
-            handRNAColorBar = handFig.colorbar(handAbund, cax=handCMapAx, ticks=[0, 4, 8, 12],
-                                               orientation='horizontal', extend='max')
-            handRNAColorBar.ax.tick_params(labelsize=6)
+            if strLine == 'SUM159':
+                handAx.annotate(text='',
+                                xytext=(0.005, 1.05),
+                                xy=(0.91, 1.05),
+                                xycoords='axes fraction',
+                                textcoords='axes fraction',
+                                annotation_clip=False,
+                                arrowprops=dict(arrowstyle="-",
+                                                connectionstyle="arc3",
+                                                shrinkA=0.0, shrinkB=0.0,
+                                                color='k',
+                                                lw=1))
+                handAx.text(len(listTFs)/2, -1.25,
+                            'EMT-related\ntranscription factors',
+                            ha='center', va='bottom',
+                            fontsize=6)
 
-            handCMapAx.set_title('Abundance\n(log$_{2}$(TPM+1))',
-                                 fontsize=6)
-
-            for axis in ['top', 'bottom', 'left', 'right']:
-                handCMapAx.spines[axis].set_linewidth(0.5)
+                handAx.annotate(text='',
+                                xytext=(0.92, 1.05),
+                                xy=(0.995, 1.05),
+                                xycoords='axes fraction',
+                                textcoords='axes fraction',
+                                annotation_clip=False,
+                                arrowprops=dict(arrowstyle="-",
+                                                connectionstyle="arc3",
+                                                shrinkA=0.0, shrinkB=0.0,
+                                                color='k',
+                                                lw=1))
+                handAx.text(len(listTFs) + (len(listOtherFactors)/2)-0.5, -1.25,
+                            'Other EMT\nmarkers',
+                            ha='center', va='bottom',
+                            fontsize=6)
 
             handAx = handFig.add_axes(dictPanelPos[f'{strLine}_logFC'])
             handLogFC = handAx.matshow(dflogFCInt[[f'{strLine}:logFC']].transpose().values.astype(float),
@@ -2111,6 +2133,21 @@ class Plot:
 
             for axis in ['top', 'bottom', 'left', 'right']:
                 handAx.spines[axis].set_linewidth(0.5)
+
+
+
+
+        handCMapAx = handFig.add_axes(dictPanelPos['Legend_Abund'])
+        handRNAColorBar = handFig.colorbar(handAbund, cax=handCMapAx, ticks=[0, 4, 8, 12],
+                                           orientation='horizontal', extend='max')
+        handRNAColorBar.ax.tick_params(labelsize=6)
+
+        handCMapAx.set_title('Abundance\n(log$_{2}$(TPM+1))',
+                             fontsize=6)
+
+        for axis in ['top', 'bottom', 'left', 'right']:
+            handCMapAx.spines[axis].set_linewidth(0.5)
+
 
         handCMapAx = handFig.add_axes(dictPanelPos['Legend_logFC'])
         handRNAColorBar = handFig.colorbar(handLogFC, cax=handCMapAx, ticks=[-8, -4, 0, 4, 8],
