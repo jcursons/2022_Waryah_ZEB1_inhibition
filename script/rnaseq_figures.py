@@ -1913,13 +1913,27 @@ class Plot:
 
     def emt_tfs(flagResult=False):
 
-        dictPanelPos = {'SUM159_Abund':[0.20, 0.72, 0.75, 0.15],
-                        'SUM159_logFC':[0.20, 0.55, 0.75, 0.075],
-                        'MDAMB231_Abund':[0.20, 0.25, 0.75, 0.15],
-                        'MDAMB231_logFC':[0.20, 0.08, 0.75, 0.075],
-                        'Legend_Abund':[0.25, 0.34, 0.08, 0.025],
-                        'Legend_logFC':[0.535, 0.34, 0.08, 0.025],
-                        'Legend_pVal':[0.82, 0.34, 0.08, 0.025]}
+        numMatchedPanelYSpacer = 0.14
+        numSUM159BaseYPos = 0.60
+        numMDAMB231BaseYPos = 0.12
+        numLogFCHeight = 0.05
+        numAbundHeight = 0.15
+        numMainPanelWidth = 0.76
+        numMainPanelLeft = 0.22
+
+        numLegendPanelYPos = 0.48
+        numLegendPanelWidth = 0.15
+
+        dictPanelPos = {'SUM159_Abund':[numMainPanelLeft, numSUM159BaseYPos+numMatchedPanelYSpacer, numMainPanelWidth, numAbundHeight],
+                        'SUM159_logFC':[numMainPanelLeft, numSUM159BaseYPos, numMainPanelWidth, numLogFCHeight],
+                        'MDAMB231_Abund':[numMainPanelLeft, numMDAMB231BaseYPos+numMatchedPanelYSpacer, numMainPanelWidth, numAbundHeight],
+                        'MDAMB231_logFC':[numMainPanelLeft, numMDAMB231BaseYPos, numMainPanelWidth, numLogFCHeight],
+                        'Legend_Abund':[0.25, numLegendPanelYPos, numLegendPanelWidth, 0.025],
+                        'Legend_logFC':[0.57, numLegendPanelYPos, numLegendPanelWidth, 0.025],
+                        'Legend_pVal':[0.75, numLegendPanelYPos, numLegendPanelWidth, 0.025]}
+
+        dictLineLabel = {'MDAMB231':'MDA-MB-231',
+                         "SUM159":'SUM159'}
 
         listTFs = ['ALX1', 'ATF2', 'ATF3', 'BACH1', 'ELK3', 'ETS1', 'FOSL1', 'FOSL2',
                    'FOXA1', 'FOXA2', 'FOXC1', 'FOXC2', 'FOXF2', 'FOXG1', 'FOXK1', 'FOXM1', 'FOXO3', 'FOXO4', 'FOXQ1',
@@ -1945,8 +1959,9 @@ class Plot:
         dfAbundOfInt = dfAbund.reindex(listGenesOfIntENSG).copy(deep=True)
         dfAbundOfInt.index = listGenesOfInt
 
-        arrayAllAbundData = dfAbundOfInt.values.astype(float)
-        numMaxAbund = np.max(np.abs(np.ravel(arrayAllAbundData[~np.isnan(arrayAllAbundData)])))
+        arrayAllLogAbundData = np.log2(np.nan_to_num(dfAbundOfInt.values.astype(float))+1)
+
+        numMaxAbund = np.max(np.ravel(arrayAllLogAbundData[~np.isnan(arrayAllLogAbundData)]))
 
 
         # load the logFC data
@@ -1972,24 +1987,99 @@ class Plot:
             elif strLine == 'MDAMB231':
                 strBatch = 'B2'
 
+            numCellLineYPos = dictPanelPos[f'{strLine}_logFC'][1]\
+                              + (dictPanelPos[f'{strLine}_Abund'][3] +
+                                 dictPanelPos[f'{strLine}_logFC'][3] +
+                                 numMatchedPanelYSpacer)/2
+
+            handFig.text(0.02, numCellLineYPos, dictLineLabel[strLine],
+                         ha='center', va='center', rotation=90,
+                         fontsize=10, fontweight='bold')
+
             listAbundCols = [f'{strBatch}_{strLine}_EVC_{i+1}' for i in range(3)] + \
                             [f'{strBatch}_{strLine}_gAll_{i+1}' for i in range(3)]
 
+            arrayLogAbundData = \
+                np.log2(np.nan_to_num(dfAbundOfInt[listAbundCols].transpose().values.astype(float)) + 1)
+
             handAx = handFig.add_axes(dictPanelPos[f'{strLine}_Abund'])
-            handAx.matshow(dfAbundOfInt[listAbundCols].transpose().values.astype(float),
-                           cmap=plt.cm.viridis,
+            handAbund = handAx.matshow(arrayLogAbundData,
+                           cmap=plt.cm.PuBu,
                            vmin=0,
                            vmax=numMaxAbund,
                            aspect='auto')
+            for iAnnotLine in range(5):
+                handAx.axhline(xmin=0, xmax=1,
+                               y=iAnnotLine+0.5,
+                               color='0.5', lw=0.25,
+                               ls='-', alpha=0.7)
+            handAx.axhline(xmin=0, xmax=1,
+                               y=2.5,
+                               color='k', lw=0.5,
+                               ls='-', alpha=1)
+
+            for iRep in range(3):
+                handAx.text(-0.7, iRep,f'Rep. {iRep+1}',
+                            ha='right', va='center',
+                            fontsize=6)
+            for iRep in range(3):
+                handAx.text(-0.7, iRep+3,f'Rep. {iRep+1}',
+                            ha='right', va='center',
+                            fontsize=6)
+
+            handAx.annotate(text='',
+                            xytext=(-0.07, 0.45),
+                            xy=(-0.07, 0.05),
+                            xycoords='axes fraction',
+                            textcoords='axes fraction',
+                            annotation_clip=False,
+                            arrowprops=dict(arrowstyle="-",
+                                            connectionstyle="arc3",
+                                            shrinkA=0.0, shrinkB=0.0,
+                                            color='k',
+                                            lw=1))
+            handAx.text(-5, 1,
+                        'No gRNAs',
+                        ha='right', va='center',
+                        fontsize=6)
+
+            handAx.annotate(text='',
+                            xytext=(-0.07, 0.55),
+                            xy=(-0.07, 0.95),
+                            xycoords='axes fraction',
+                            textcoords='axes fraction',
+                            annotation_clip=False,
+                            arrowprops=dict(arrowstyle="-",
+                                            connectionstyle="arc3",
+                                            shrinkA=0.0, shrinkB=0.0,
+                                            color='k',
+                                            lw=1))
+            handAx.text(-5, 4,
+                        'All 4 gRNAs',
+                        ha='right', va='center',
+                        fontsize=6)
 
             handAx.set_yticks([])
             handAx.set_xticks([])
             handAx.set_yticklabels([])
             handAx.set_xticklabels([])
 
+            for axis in ['top', 'bottom', 'left', 'right']:
+                handAx.spines[axis].set_linewidth(0.5)
+
+            handCMapAx = handFig.add_axes(dictPanelPos['Legend_Abund'])
+            handRNAColorBar = handFig.colorbar(handAbund, cax=handCMapAx, ticks=[0, 4, 8, 12],
+                                               orientation='horizontal', extend='max')
+            handRNAColorBar.ax.tick_params(labelsize=6)
+
+            handCMapAx.set_title('Abundance\n(log$_{2}$(TPM+1))',
+                                 fontsize=6)
+
+            for axis in ['top', 'bottom', 'left', 'right']:
+                handCMapAx.spines[axis].set_linewidth(0.5)
 
             handAx = handFig.add_axes(dictPanelPos[f'{strLine}_logFC'])
-            handAx.matshow(dflogFCInt[[f'{strLine}:logFC']].transpose().values.astype(float),
+            handLogFC = handAx.matshow(dflogFCInt[[f'{strLine}:logFC']].transpose().values.astype(float),
                            cmap=plt.cm.PRGn,
                            vmin=-numMaxAbsLogFC,
                            vmax=numMaxAbsLogFC,
@@ -2000,10 +2090,7 @@ class Plot:
             handAx.set_yticklabels([])
             handAx.set_xticklabels([])
 
-            # if iLine == 0:
-            strGeneLabelYPos = -1.05
-            # elif iLine == 1:
-            # strGeneLabelYPos = 1
+            strGeneLabelYPos = -1.35
 
             for iGene in range(len(listGenesOfInt)):
                 handAx.text(iGene+0.5,
@@ -2019,17 +2106,45 @@ class Plot:
                 if np.isnan(dflogFCInt.loc[strGene, f'{strLine}:adj.P.Val']):
                     handAx.scatter(iGene, 0, marker='o', color='k', s=5)
                 else:
-                    if dflogFCInt.loc[strGene, f'{strLine}:adj.P.Val'].astype(float) < 0.05:
-                        a=1
-                    else:
+                    if dflogFCInt.loc[strGene, f'{strLine}:adj.P.Val'].astype(float) >= 0.05:
                         handAx.scatter(iGene, 0, marker='o', color='k', s=5)
 
+            for axis in ['top', 'bottom', 'left', 'right']:
+                handAx.spines[axis].set_linewidth(0.5)
 
-        # handAx.text(0.01, )
+        handCMapAx = handFig.add_axes(dictPanelPos['Legend_logFC'])
+        handRNAColorBar = handFig.colorbar(handLogFC, cax=handCMapAx, ticks=[-8, -4, 0, 4, 8],
+                                           orientation='horizontal', extend='both')
+        handRNAColorBar.ax.tick_params(labelsize=6)
+
+        handCMapAx.set_title('log$_{2}$FC',
+                             fontsize=6)
+
+        for axis in ['top', 'bottom', 'left', 'right']:
+            handCMapAx.spines[axis].set_linewidth(0.5)
+
+
+        handPValAx = handFig.add_axes(dictPanelPos['Legend_pVal'])
+        handPValAx.set_xlim([0, 1])
+        handPValAx.set_ylim([0, 1])
+
+        handPValAx.scatter(0.06, 0.5, marker='o', color='k', s=5)
+        handPValAx.text(0.10, 0.5, r'adj. $p$-val. $\geq$ 0.05', fontsize=6, ha='left', va='center')
+
+        # handPValAx.set_title('log$_{2}$FC significance',
+        #                      fontsize=6)
+
+        for axis in ['top', 'bottom', 'left', 'right']:
+            handPValAx.spines[axis].set_linewidth(0)
+
+        handPValAx.set_yticks([])
+        handPValAx.set_xticks([])
+        handPValAx.set_yticklabels([])
+        handPValAx.set_xticklabels([])
 
         for strFormat in Plot.listFileFormats:
             handFig.savefig(os.path.join(Plot.strOutputLoc, 'emt_tfs.' + strFormat),
-                            ext=strFormat, dpi=300)
+                            dpi=300)
         plt.close(handFig)
 
         return flagResult
