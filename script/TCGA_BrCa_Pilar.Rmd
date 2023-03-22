@@ -1,0 +1,494 @@
+---
+title: "TCGA_PaCaRUV_UnwantedVariation"
+author:
+- name: Ramyar Molania
+  affiliation: Papenfuss Lab
+  url: https://www.wehi.edu.au/people/tony-papenfuss
+date: "15-02-2020"
+output:
+  rmdformats::readthedown:
+    fig_width: 12
+    fig_height: 5
+    gallery: yes
+    highlight: tango
+    lightbox: yes
+    self_contained: no
+    thumbnails: no
+    number_sections: yes
+    toc_depth: 3
+    use_bookdown: yes
+  html_document2:
+    df_print: paged
+  html_document:
+    toc_depth: '3'
+    df_print: paged
+params:
+  update_date: !r paste("Last updated on:", Sys.Date() )
+editor_options:
+  chunk_output_type: console
+---
+`r params$update_date`
+
+<style>
+body {
+text-align: justify}
+</style>
+
+
+```{r knitr_init, echo=FALSE, results="asis"}
+library(knitr)
+library(rmdformats)
+library(DT)
+library(BiocStyle)
+options(max.print = "75")
+opts_chunk$set(
+  echo = FALSE,
+  prompt = FALSE,
+  comment = FALSE,
+  message = FALSE,
+  warning = FALSE)
+opts_knit$set(width = 65)
+```
+
+# setup path
+
+```{r file-setUp, message=FALSE, include=FALSE, results=F}
+mainDir <- getwd()
+outPath <- "../output/"
+figPath <- "../figure/"
+dataPath <- "../data/"
+scriptPath <- "../script/"
+ifelse(
+  !dir.exists(file.path(mainDir, outPath)), 
+  dir.create(file.path(mainDir, outPath)), 
+  FALSE
+  )
+ifelse(
+  !dir.exists(file.path(mainDir, figPath)), 
+  dir.create(file.path(mainDir, figPath)),
+  FALSE
+  )
+ifelse(
+  !dir.exists(file.path(mainDir, dataPath)), 
+  dir.create(file.path(mainDir, dataPath)),
+  FALSE
+  )
+ifelse(
+  !dir.exists(file.path(mainDir, scriptPath)), 
+  dir.create(file.path(mainDir, scriptPath)),
+  FALSE
+  )
+```
+
+# Reading the datasets
+## The TCGA BRCA methylation data
+```{r}
+# data
+brca.meth <- readRDS('TCGA_BRCA_Meth450_RemovedNa_hg19.rds')
+dim(brca.meth) # 363736    895
+sum(is.na(brca.meth)) # 0
+
+# sample annotate
+meth.sampleAnnot <- as.data.frame(colnames(brca.meth))
+colnames(meth.sampleAnnot) <- 'sample'
+meth.sampleAnnot$sampl.a <- substr(
+  meth.sampleAnnot$sample, 
+  start = 1, 
+  stop = 16
+  )
+```
+
+### Methylation probes annotations
+```{r}
+library(IlluminaHumanMethylation450kanno.ilmn12.hg19)
+data(Locations)
+data(Other)
+data(Manifest)
+data(SNPs.Illumina)
+data(Islands.UCSC)
+
+Locations <- as.data.frame(Locations)
+Other <- as.data.frame(Other)
+Manifest <- as.data.frame(Manifest)
+SNPs.Illumina <- as.data.frame(SNPs.Illumina)
+Islands.UCSC <- as.data.frame(Islands.UCSC)
+
+all.equal(row.names(Locations), row.names(Other))
+all.equal(row.names(Locations), row.names(Manifest))
+all.equal(row.names(Locations), row.names(Islands.UCSC))
+all.equal(row.names(Locations), row.names(SNPs.Illumina))
+
+probes.450k <- as.data.frame(cbind(
+  Locations, 
+  Other, 
+  Manifest, 
+  SNPs.Illumina, 
+  Islands.UCSC))
+sort(table(probes.450k$UCSC_RefGene_Group), decreasing = T)[1:20]
+```
+
+## The TCGA BRCA expression data
+```{r}
+brca.rnaseq <- readRDS('brca.fpkm.UQ.rds')
+dim(brca.rnaseq) # 16537  1180
+```
+
+##  The TCGA BRCA clinical information
+```{r}
+brca.sampleAnnot <- readRDS('brca.sampleAnnot.rds')
+dim(brca.sampleAnnot) # 1180 4137
+```
+
+# Data preparation-
+## Common samples between RNA and DNA data
+```{r}
+meth.expr.samples <- intersect(
+  brca.sampleAnnot$sample.id_mda, 
+  meth.sampleAnnot$sampl.a
+  )
+length(meth.expr.samples) # 843
+meth.sampleAnnot <- merge(
+  brca.sampleAnnot, 
+  meth.sampleAnnot, 
+  by.x = 'sample.id_mda', 
+  by.y = 'sampl.a'
+  )
+brca.meth <- brca.meth[ , meth.sampleAnnot$sample]
+dim(brca.meth) # 363736    845
+all.equal(
+  colnames(brca.meth), 
+  meth.sampleAnnot$sample
+  )
+
+dup.samples <- !duplicated(meth.sampleAnnot$Sample)
+meth.sampleAnnot <- meth.sampleAnnot[ dup.samples, ]
+brca.meth <- brca.meth[ , dup.samples]
+all.equal(
+  colnames(brca.meth), 
+  meth.sampleAnnot$sample
+  )
+brca.rnaseq <- brca.rnaseq[ , meth.sampleAnnot$Sample]
+all.equal(
+  colnames(brca.rnaseq), 
+  meth.sampleAnnot$Sample
+  )
+```
+
+# Pilar's genes and EMT gene signatures
+```{r}
+# EMT gene signatures
+emt.sig <- read.delim('Thiery_EMTsignature_both_tumour_cellLine_EntrezIDs.txt')
+emt.sig <- emt.sig[!is.na(emt.sig$epiMes_tumor) , ]
+epi.sig <- emt.sig[emt.sig$epiMes_tumor == 'epi' , ]
+mes.sig <- emt.sig[emt.sig$epiMes_tumor == 'mes' , ]
+
+### Pilar gene list
+# pilar.all.genes <- read.delim('Pilar.gene.list.txt') old
+pilar.all.genes <- read.csv('Merged_RNA_Meth_CommonGenes_SUM159_June2022.csv')
+# pilar.all.genes$external_gene_name[pilar.all.genes$external_gene_name == 'PXYLP1'] <- 'ACPL2'
+# pilar.all.genes$external_gene_name[pilar.all.genes$external_gene_name == 'ADGRG1'] <- 'GPR56'
+
+# pilar.gene.list <- unique(pilar.all.genes$external_gene_name)
+pilar.gene.list <- unique(pilar.all.genes$Symbols)
+length(unique(pilar.gene.list)) # 28
+# pilar.up <- unique(pilar.all.genes$external_gene_name[pilar.all.genes$logFC_RNA > 0])
+# pilar.down <- unique(pilar.all.genes$external_gene_name[pilar.all.genes$logFC_RNA < 0])
+```
+
+## Probes of interest
+```{r}
+### All genes
+pilar.genes <- vector()
+for(i in 1:length(pilar.gene.list)){
+  selected.genes <- pilar.gene.list[i]
+  probes.index <- grep(
+    selected.genes, 
+    probes.450k$UCSC_RefGene_Name
+    )
+  probes <- row.names(probes.450k)[probes.index]
+  location = probes.450k$UCSC_RefGene_Group[probes.index]
+  pos = probes.450k$pos[probes.index]
+  all.probes <- data.frame(
+    location = location,
+    pos = pos,
+    probes = probes, 
+    genes = rep(selected.genes, length(probes.index)))
+  pilar.genes <- rbind(pilar.genes, all.probes)
+}
+dim(pilar.genes) # 2006    2
+pilar.genes$pilar.probes <- 'no'
+pilar.genes$pilar.probes[pilar.genes$probes %in% pilar.all.genes$Probes] <- 'yes'
+```
+
+# PCA plot
+```{r}
+index.selected <- row.names(brca.meth) %in% pilar.genes$probes[pilar.genes$pilar.probes == 'yes']
+pca.meth.pilar <- .pca(
+  data = brca.meth[index.selected , ],
+  is.log = TRUE
+  )
+pdf(
+  'TCGA_BRCA_PCA_PilarsProbes_New.pdf',
+    width = 8,
+    height = 4
+    )
+p <- .scatter.density.pc(
+  pcs = pca.meth.pilar$sing.val$u[, 1:3],
+  pc.var = pca.meth.pilar$var,
+  group.name = 'PAM50',
+  group = meth.sampleAnnot$Call,
+  color = pam50.colors,
+  strokeSize = .2,
+  pointSize = 2,
+  strokeColor = 'gray30',
+  alpha = .5
+  )
+do.call(grid.arrange, c(p[1], p[4], ncol = 2))
+dev.off()
+```
+
+# Survival plot
+## First plot
+### 28 genes
+```{r}
+up.28genes <- unique(pilar.all.genes$Symbols[pilar.all.genes$logFC_RNA > 0])
+length(unique(up.28genes)) # 22
+down.28genes <- unique(pilar.all.genes$Symbols[pilar.all.genes$logFC_RNA < 0])
+length(unique(down.28genes)) # 6
+
+rank.data.brca <- singscore::rankGenes(brca.rnaseq)
+scores.28genes <- singscore::simpleScore(
+  rankData = rank.data.brca, 
+  upSet = up.28genes, 
+  downSet = down.28genes
+  )
+groups.28genes <- quantile(scores.28genes$TotalScore, c(.25, .5, .75))
+meth.sampleAnnot$scores.28genes <- 'Intermediate'
+index <- scores.28genes$TotalScore < groups.28genes[[1]]
+meth.sampleAnnot$scores.28genes[index] <- 'Low'
+index <- scores.28genes$TotalScore > groups.28genes[[3]] 
+meth.sampleAnnot$scores.28genes[index] <- 'High'
+table(meth.sampleAnnot$scores.28genes)
+
+new.info <- meth.sampleAnnot[, c('scores.28genes', 'OS.time_liu', 'OS_liu')]
+row.names(new.info) <- colnames(brca.meth)
+
+survival.plot.28genes <- survival_plot(
+      data = brca.meth,
+      stratify = 'covariate',
+      annot = new.info,
+      scoreCol = NULL,
+      covariate = "scores.28genes",
+      gene = NULL,
+      isCategoricalCov = TRUE,
+      timeCol = "OS.time_liu",
+      eventCol = "OS_liu",
+      nGroup = NULL,
+      confInt = FALSE,
+      ylabel = "Survival",
+      cols = c('orange','royalblue2','plum2','seagreen3'),
+      nColLegend = 1,
+      plotType = "autoplot"
+    )$plot +
+    theme(
+    panel.background = element_blank(),
+    legend.key = element_blank(),
+    axis.line = element_line(colour = 'black', size = 1),
+    axis.title.x = element_text(size = 18),
+    axis.title.y = element_text(size = 18),
+    plot.title = element_text(size = 18),
+    axis.text.x = element_text(size = 14),
+    axis.text.y = element_text(size = 14),
+    legend.text = element_text(size = 14),
+    legend.title = element_text(size = 18),
+    legend.position = c(.8,.8),
+    strip.text.x = element_text(size = 18)
+  )
+pdf('BRCA_Survival_28genes.pdf', width = 6, height = 5)
+survival.plot.28genes
+dev.off()
+```
+
+### 26 genes
+```{r}
+pilar.all.genes <- pilar.all.genes[ grepl('Body|TSS', pilar.all.genes$UCSC_RefGene_Group), ]
+up.26genes <- unique(pilar.all.genes$Symbols[pilar.all.genes$logFC_RNA > 0])
+length(unique(up.26genes)) # 22
+down.26genes <- unique(pilar.all.genes$Symbols[pilar.all.genes$logFC_RNA < 0])
+length(unique(down.26genes)) # 6
+
+
+rank.data.brca <- singscore::rankGenes(brca.rnaseq)
+scores.26genes <- singscore::simpleScore(
+  rankData = rank.data.brca, 
+  upSet = up.26genes, 
+  downSet = down.26genes
+  )
+groups.26genes <- quantile(scores.26genes$TotalScore, c(.25, .5, .75))
+meth.sampleAnnot$scores.26genes <- 'Intermediate'
+index <- scores.26genes$TotalScore < groups.26genes[[1]]
+meth.sampleAnnot$scores.26genes[index] <- 'Low'
+index <- scores.26genes$TotalScore > groups.26genes[[3]] 
+meth.sampleAnnot$scores.26genes[index] <- 'High'
+table(meth.sampleAnnot$scores.26genes)
+
+new.info <- meth.sampleAnnot[, c('scores.26genes', 'OS.time_liu', 'OS_liu')]
+row.names(new.info) <- colnames(brca.meth)
+
+survival.plot.26genes <- survival_plot(
+      data = brca.meth,
+      stratify = 'covariate',
+      annot = new.info,
+      scoreCol = NULL,
+      covariate = "scores.26genes",
+      gene = NULL,
+      isCategoricalCov = TRUE,
+      timeCol = "OS.time_liu",
+      eventCol = "OS_liu",
+      nGroup = NULL,
+      confInt = FALSE,
+      ylabel = "Survival",
+      cols = c('orange','royalblue2','plum2','seagreen3'),
+      nColLegend = 1,
+      plotType = "autoplot"
+    )$plot +
+    theme(
+    panel.background = element_blank(),
+    legend.key = element_blank(),
+    axis.line = element_line(colour = 'black', size = 1),
+    axis.title.x = element_text(size = 18),
+    axis.title.y = element_text(size = 18),
+    plot.title = element_text(size = 18),
+    axis.text.x = element_text(size = 14),
+    axis.text.y = element_text(size = 14),
+    legend.text = element_text(size = 14),
+    legend.title = element_text(size = 18),
+    legend.position = c(.8,.8),
+    strip.text.x = element_text(size = 18)
+  )
+pdf('BRCA_Survival_26genes.pdf', width = 6, height = 5)
+survival.plot.26genes
+dev.off()
+```
+
+## Second plot
+```{r}
+gene.list <- read.csv('CommonGenes_logFC_RNA_Meth_MDAMB231.csv')
+up.genes <- gene.list$Symbols[gene.list$logFC_RNA > 0]
+length(unique(up.genes)) # 65
+down.genes <- gene.list$Symbols[gene.list$logFC_RNA < 0]
+length(unique(down.genes)) # 24
+
+index.cancer <- meth.sampleAnnot$Call != 'Adjacent normal'
+rank.data.brca <- singscore::rankGenes(brca.rnaseq)
+genes.scores <- singscore::simpleScore(
+  rankData = rank.data.brca, 
+  upSet = unique(up.genes), 
+  downSet = unique(down.genes)
+  )
+groups <- quantile(genes.scores$TotalScore, c(.25, .5, .75))
+meth.sampleAnnot$scores <- 'Intermediate'
+index <- genes.scores$TotalScore < groups[[1]]
+meth.sampleAnnot$scores[index] <- 'Low'
+index <- genes.scores$TotalScore > groups[[3]]
+meth.sampleAnnot$scores[index] <- 'High'
+
+new.info <- meth.sampleAnnot[, c('scores', 'OS.time_liu', 'OS_liu')]
+row.names(new.info) <- colnames(brca.meth)
+
+survival.plot.a <- survival_plot(
+      data = brca.meth,
+      stratify = 'covariate',
+      annot = new.info,
+      scoreCol = NULL,
+      covariate = "scores",
+      gene = NULL,
+      isCategoricalCov = TRUE,
+      timeCol = "OS.time_liu",
+      eventCol = "OS_liu",
+      nGroup = NULL,
+      confInt = FALSE,
+      ylabel = "Survival",
+      cols = c('orange','royalblue2','plum2','seagreen3'),
+      nColLegend = 1,
+      plotType = "autoplot"
+    )$plot +
+    theme(
+    panel.background = element_blank(),
+    legend.key = element_blank(),
+    axis.line = element_line(colour = 'black', size = 1),
+    axis.title.x = element_text(size = 18),
+    axis.title.y = element_text(size = 18),
+    plot.title = element_text(size = 18),
+    axis.text.x = element_text(size = 14),
+    axis.text.y = element_text(size = 14),
+    legend.text = element_text(size = 14),
+    legend.title = element_text(size = 18),
+    legend.position = c(.8,.8),
+    strip.text.x = element_text(size = 18)
+  )
+pdf('BRCA_Survival_CommonGenes_logFC_RNA_Meth_MDAMB231.pdf', width = 6, height = 5)
+survival.plot.a
+dev.off()
+```
+
+## Third plot
+```{r}
+gene.list <- read.csv('DEGs_MDA231_logFC1_adjPval0.05.csv')
+up.genes <- gene.list$Symbols[gene.list$logFC > 0]
+length(unique(up.genes)) # 80
+down.genes <- gene.list$Symbols[gene.list$logFC < 0]
+length(unique(down.genes)) # 34
+
+index.cancer <- meth.sampleAnnot$Call != 'Adjacent normal'
+rank.data.brca <- singscore::rankGenes(brca.rnaseq)
+genes.scores <- singscore::simpleScore(
+  rankData = rank.data.brca, 
+  upSet = unique(up.genes), 
+  downSet = unique(down.genes)
+  )
+quantile(genes.scores$TotalScore, c(.25, .5, .75))
+meth.sampleAnnot$scores <- 'Intermediate'
+index <- genes.scores$TotalScore < -0.01701940
+meth.sampleAnnot$scores[index] <- 'Low'
+index <- genes.scores$TotalScore > 0.04228688 
+meth.sampleAnnot$scores[index] <- 'High'
+
+new.info <- meth.sampleAnnot[, c('scores', 'OS.time_liu', 'OS_liu')]
+row.names(new.info) <- colnames(brca.meth)
+
+survival.plot.b <- survival_plot(
+      data = brca.meth,
+      stratify = 'covariate',
+      annot = new.info,
+      scoreCol = NULL,
+      covariate = "scores",
+      gene = NULL,
+      isCategoricalCov = TRUE,
+      timeCol = "OS.time_liu",
+      eventCol = "OS_liu",
+      nGroup = NULL,
+      confInt = FALSE,
+      ylabel = "Survival",
+      cols = c('orange','royalblue2','plum2','seagreen3'),
+      nColLegend = 1,
+      plotType = "autoplot"
+    )$plot +
+    theme(
+    panel.background = element_blank(),
+    legend.key = element_blank(),
+    axis.line = element_line(colour = 'black', size = 1),
+    axis.title.x = element_text(size = 18),
+    axis.title.y = element_text(size = 18),
+    plot.title = element_text(size = 18),
+    axis.text.x = element_text(size = 14),
+    axis.text.y = element_text(size = 14),
+    legend.text = element_text(size = 14),
+    legend.title = element_text(size = 18),
+    legend.position = c(.8,.8),
+    strip.text.x = element_text(size = 18)
+  )
+pdf('BRCA_Survival_DEGs_MDA231_logFC1_adjPval0.05_114genes.pdf', width = 6, height = 5)
+survival.plot.b
+dev.off()
+```

@@ -1,0 +1,1674 @@
+---
+title: "Methylation analysis"
+author: "Momeneh (Sepideh) Foroutan"
+date: "2020-09-07"
+output:
+  rmdformats::readthedown:
+    fig_width: 12
+    fig_height: 5
+    gallery: yes
+    highlight: tango
+    lightbox: yes
+    self_contained: no
+    thumbnails: no
+    number_sections: yes
+    toc_depth: 3
+    use_bookdown: yes
+  html_document2:
+    df_print: paged
+  html_document:
+    toc_depth: '3'
+    df_print: paged
+params:
+  update_date: !r paste("Last updated on:", Sys.Date() )
+editor_options:
+  chunk_output_type: console
+---
+`r params$update_date`
+
+<style>
+body {
+text-align: justify}
+</style>
+
+
+# Overview and set up
+This RMarkdown includes codes and notes for the analysis of the methylation data, and includes comparisons between methylation and RNA-seq results. 
+We set the paths and load libraries, read the data and sample information, perform QC analysis, perform DE analysis, as well as GO and KEGG analyses. We finish the report by RNA vs methylation comparisons. 
+
+```{r}
+mainDir <- getwd()
+outPath <- "../output/"
+figPath <- "../figure/20200907/"
+dataPath <- "../data/MethylationData_20200907/"
+scriptPath <- "../script/"
+
+rnaseq_outPath <- "../../Blancafort_Wallis_A673/output/"
+
+ifelse(!dir.exists(file.path(mainDir, outPath)), dir.create(file.path(mainDir, outPath)), FALSE)
+ifelse(!dir.exists(file.path(mainDir, figPath)), dir.create(file.path(mainDir, figPath)), FALSE)
+ifelse(!dir.exists(file.path(mainDir, dataPath)), dir.create(file.path(mainDir, dataPath)), FALSE)
+ifelse(!dir.exists(file.path(mainDir, scriptPath)), dir.create(file.path(mainDir, scriptPath)), FALSE)
+
+
+# BiocManager::install("IlluminaHumanMethylationEPICmanifest")
+# BiocManager::install("IlluminaHumanMethylationEPICanno.ilm10b2.hg19")
+
+library(IlluminaHumanMethylationEPICmanifest)
+library(IlluminaHumanMethylationEPICanno.ilm10b2.hg19)
+library(RColorBrewer)
+library(ComplexHeatmap)
+library(edgeR)
+library(missMethyl)
+library(circlize)
+library(dplyr)
+library(ggplot2)
+
+# list.files(dataPath)
+currentCols <-  c(
+  brewer.pal(8, "Dark2")[-5],
+  brewer.pal(10, "Paired"),
+  brewer.pal(12, "Set3"),
+  brewer.pal(9, "Blues")[c(8, 3, 7, 4, 6, 9, 5)],
+  brewer.pal(9, "Oranges")[c(8, 3, 7, 4, 6, 9, 5)],
+  brewer.pal(9, "Greens")[c(8, 3, 7, 4, 6, 9, 5)],
+  brewer.pal(9, "Purples")[c(8, 3, 7, 4, 6, 9, 5)],
+  brewer.pal(9, "Reds")[c(8, 3, 7, 4, 6, 9, 5)],
+  brewer.pal(9, "Greys")[c(8, 3, 7, 4, 6, 9, 5)],
+  brewer.pal(9, "BuGn")[c(8, 3, 7, 4, 6, 9, 5)],
+  brewer.pal(9, "PuRd")[c(8, 3, 7, 4, 6, 9, 5)],
+  brewer.pal(9, "BuPu")[c(8, 3, 7, 4, 6, 9, 5)],
+  brewer.pal(9, "YlGn")[c(8, 3, 7, 4, 6, 9, 5)],
+  brewer.pal(10, "Paired")
+  )
+
+
+source(paste0(scriptPath, "PCA_plot.R"))
+
+```
+
+# Read data
+```{r}
+targets <- read.metharray.sheet(dataPath)
+targets$Sample_Group <- c("WT", "WT", "EV", "EV", "EV", "Guide", "Guide", "Guide")
+
+rgSet <- read.metharray.exp(targets = targets)
+
+pd <- pData(rgSet)
+pd[, 1:4]
+```
+
+We have two types of annotation packages: “manifest” packages which contains the array design and “annotation” packages which contains information about where the methylation loci are located on the genome, which genomic features they map to and possible whether they overlap any known SNPs
+```{r}
+annotation(rgSet)
+#                     array
+# "IlluminaHumanMethylationEPIC" 
+#                     annotation 
+#                 "ilm10b4.hg19" 
+```
+
+We used missMethyl to process the raw data, and applied Subset-quantile Within Array Normalisation (SWAN) normalization. We filtered poor quality probes based on the detection p-values, such that we only retained probes with p-value less than 0.01 in all samples. After adding an offset of 100 to methylated and umethylated channels separately, we calculated the M and exctract beta values.
+```{r}
+mSet <- preprocessRaw(rgSet)
+
+set.seed(20200907)
+mSetSw <- SWAN(mSet, verbose=TRUE)
+```
+
+```{r}
+par(mfrow = c(1, 2), cex = 1.25)
+densityByProbeType(mSet[,1], main = "Raw")
+densityByProbeType(mSetSw[,1], main = "SWAN")
+```
+
+## Filter low quality probes
+To filter low quality probes and to retain a CpG for further analysis, we retain probes that have detection p-value < 0.01 in all samples.
+```{r}
+detP <- detectionP(rgSet)
+keep <- rowSums(detP < 0.01) == ncol(rgSet)
+summary(keep)
+mSetSw0 <- mSetSw
+mSetSw <- mSetSw[keep,]
+
+detP_filt <- detP[keep, ]
+```
+
+
+## Calculate Beta and M values
+We add an offset to the methylated and unmethylated intensities when calculating M-values, extract the methylated and unmethylated channels separately and perform our own β and M-values calculation. 
+```{r}
+set.seed(20200907)
+# mset_reduced <- mSetSw[sample(1:nrow(mSetSw), 20000),]
+meth <- getMeth(mSetSw)
+unmeth <- getUnmeth(mSetSw)
+Mval <- log2((meth + 100)/(unmeth + 100))
+beta <- getBeta(mSetSw)
+dim(Mval)
+
+saveRDS(
+  list(
+    meth = meth,
+    unmeth = unmeth,
+    Mval = Mval,
+    beta = beta, 
+    detP = detP_filt
+  ),
+  paste0(outPath, "Beta_MVals_MissMethyl_SWAN_2022Jul.RDS")
+)
+```
+
+### Export data for GEO
+```{r}
+d <- readRDS(paste0(outPath, "Beta_MVals_MissMethyl_SWAN_2022Jul.RDS"))
+tt <- targets
+tt$name <- paste0(tt$Slide, "_", tt$Array)
+
+d2 <- lapply(names(d), function(x){
+  curData <- d[[x]]
+  colnames(curData) <- tt$Sample_Name 
+  colnames(curData) <- paste0(colnames(curData), "_", x)
+  # curData <- curData[, !grepl("WT", colnames(curData))]
+  return(curData)
+})
+names(d2) <- names(d)
+
+dd <- data.frame(cbind(d2$unmeth, d2$meth, d2$detP))
+
+dd <- dd[, order(colnames(dd))]
+dd$ID_REF <- row.names(dd)
+
+dd <- dd[, c("ID_REF", 
+             "All.gRNA1_unmeth", "All.gRNA1_meth", "All.gRNA1_detP", 
+             "All.gRNA2_unmeth", "All.gRNA2_meth", "All.gRNA2_detP", 
+             "All.gRNA3_unmeth", "All.gRNA3_meth", "All.gRNA3_detP", 
+             "EV1_unmeth", "EV1_meth", "EV1_detP", 
+             "EV2_unmeth", "EV2_meth", "EV2_detP", 
+             "EV3_unmeth", "EV3_meth", "EV3_detP", 
+             "WT1_unmeth", "WT1_meth", "WT1_detP", 
+             "WT2_unmeth", "WT2_meth", "WT2_detP"
+             )]
+
+write.csv(dd,
+          paste0(outPath, "GEO_submission_UnMeth_Meth_Pval.csv"),
+          row.names = F)
+
+# b <- d2$beta
+b <- data.frame(ID_REF = row.names(d2$beta), d2$beta)
+
+write.csv(b,
+          paste0(outPath, "GEO_submission_betaValues.csv"),
+          row.names = F)
+
+```
+
+# QC
+
+## Hist of B values
+```{r}
+EVIndx <- which(targets$Sample_Group == "EV")
+WTIndx <- which(targets$Sample_Group == "WT")
+GuideIndx <- which(targets$Sample_Group == "Guide")
+
+pdf(paste0(figPath, "QC_Hist_BetaValues.pdf"),
+    height = 4.3,
+    width = 5)
+
+## Plot the first WT sample
+i <-  WTIndx[1]
+plot(
+  density(beta[, i], from = 0, to = 1),
+  main = "",
+  ylim = c(0, 4),
+  type = "n"
+)
+
+
+## add the other WT samples
+for (i in WTIndx) {
+  lines(density(beta[, i], from = 0, to = 1), col =  currentCols[3])
+}
+
+### Add All Guide samples
+for (i in GuideIndx) {
+  lines(density(beta[, i], from = 0, to = 1), col = currentCols[1])
+}
+
+### Add No Guide samples
+for (i in EVIndx) {
+  lines(density(beta[, i], from = 0, to = 1), col =  currentCols[2])
+}
+
+legend(
+  "topright",
+  legend = c("WT", "EV", "Guide"),
+  col = currentCols[c(3, 2, 1)],
+  lty = 1,
+  lwd = 2
+)
+dev.off()
+```
+
+## MDS plot
+```{r}
+par(mfrow = c(1, 1))
+
+pdf(
+  paste0(figPath, "QC_MDS_SWAN_Guide_EV_WT_beta.pdf"),
+  height = 5,
+  width = 5
+)
+plotMDS(beta, labels = targets$Sample_Name, 
+        col = currentCols[as.integer(factor(targets$Sample_Group))])
+  
+legend(
+  "topright",
+  legend = c("Guide", "WT", "EV"),
+  col = currentCols[1:3],
+  lty = 1,
+  lwd = 2
+)
+dev.off()
+```
+
+## PCA
+```{r}
+s <- svd(apply(beta , 1, function(x) scale(x, scale=FALSE , center = TRUE)))
+
+pd$SampleID <- colnames(beta)
+
+pdf(paste0(figPath, "QC_PCA_Beta_SAWN_Guide_EV_WT.pdf"), height = 7, width = 7)
+PCA_plot (expr = beta,
+  clin = pd,
+  group_to_test = "Sample_Group",
+  # data = "data",
+  svdResult = s,
+  plot_cex = 1.2,
+  legend_cex = 1.2,
+  labeled = FALSE,
+  group_to_shape = NULL,
+  cols = currentCols[1:3]
+  )
+dev.off()
+```
+
+
+
+# DE analysis
+
+## limma
+```{r}
+group <- factor(targets$Sample_Group)
+design <- model.matrix(~  0 + group)
+design
+
+colnames(design) <- c(
+  "EV", 
+  "Guide", 
+  "WT"
+  )
+
+contr.matrix <- makeContrasts(
+  Guide_EV   = Guide - EV,
+  Guide_WT  = Guide - WT,
+  EV_WT = EV - WT,
+  levels = colnames(design)
+)
+
+contr.matrix
+
+
+fit <- lmFit(Mval, design)
+fit <- contrasts.fit(fit, contrasts = contr.matrix)
+fit <- eBayes(fit)
+
+dt <- decideTests(fit)
+summary(dt)
+
+top_Guide_EV   <- topTable(fit, coef = "Guide_EV", n = Inf)
+top_Guide_WT  <- topTable(fit, coef = "Guide_WT", n = Inf)
+top_EV_WT <- topTable(fit, coef = "EV_WT", n = Inf)
+
+top_Guide_EV$Probes <- row.names(top_Guide_EV)
+top_Guide_WT$Probes <- row.names(top_Guide_WT)
+top_EV_WT$Probes <- row.names(top_EV_WT)
+ 
+# saveRDS(fit, paste0(outPath, "fit_limma.RDS"))
+# saveRDS(targets, paste0(outPath, "targets.RDS"))
+```
+
+
+### Get gene names for DM probes:
+
+Tidy up gene column such that genes separated by ";" will be in separate rows. Then, subset the data to desired probes and merge them to beta value data by only taking the overlapping probes.
+
+```{r}
+annProbe <- getAnnotation(IlluminaHumanMethylationEPICanno.ilm10b2.hg19)
+# maptGenome <- mapToGenome(IlluminaHumanMethylationEPICanno.ilm10b2.hg19)
+
+
+# annProbeRow <-
+#   tidyr::separate_rows(data.frame(annProbe),
+#                        UCSC_RefGene_Name,
+#                        UCSC_RefGene_Group,
+#                        sep = ";")
+# saveRDS(annProbeRow, paste0(outPath, "ProbeEPIC_Annotation_hg19_Long.RDS"))
+
+annProbeRow <- readRDS(paste0(outPath, "ProbeEPIC_Annotation_hg19_Long.RDS"))
+
+sum(duplicated(annProbeRow$Name))
+# [1] 743581
+
+annUniqProbe <- annProbeRow[! duplicated(annProbeRow$Name), ]
+rownames(annUniqProbe) <- annUniqProbe$Name
+
+
+
+## extract common probes:
+annUniqProbe <- annUniqProbe[rownames(Mval), ]
+
+# saveRDS(annUniqProbe, paste0(outPath, "Annotation_Unique_Probe_MvalsOverlapped.RDS"))
+
+##------- merge with DMPs:
+getCols <-
+  c(
+    'chr',
+    'pos',
+    'strand',
+    'Type',
+    'Relation_to_Island',
+    'UCSC_RefGene_Name',
+    'UCSC_RefGene_Accession',
+    'UCSC_RefGene_Group',
+    'Regulatory_Feature_Group'
+  )
+
+top_Guide_EV <-
+  merge(top_Guide_EV,
+        annUniqProbe[, getCols],
+        by.x = "Probes",
+        by.y = 'row.names')
+
+top_Guide_WT <-
+  merge(top_Guide_WT,
+        annUniqProbe[, getCols],
+        by.x = "Probes",
+        by.y = 'row.names')
+
+top_EV_WT <-
+  merge(top_EV_WT,
+        annUniqProbe[, getCols],
+        by.x = "Probes",
+        by.y = 'row.names')
+
+write.table(
+  top_Guide_EV,
+  paste0(outPath, "AllStats_limma_SWAN_Guide_EV.txt"),
+  sep = "\t",
+  row.names = F
+)
+write.table(
+  top_Guide_WT,
+  paste0(outPath, "AllStats_limma_SWAN_Guide_WT.txt"),
+  sep = "\t",
+  row.names = F
+)
+write.table(
+  top_EV_WT,
+  paste0(outPath, "AllStats_limma_SWAN_EV_WT.txt"),
+  sep = "\t",
+  row.names = F
+)
+
+
+
+## 87638
+DMPs_Guide_EV   <-
+  top_Guide_EV[top_Guide_EV$adj.P.Val < 0.05 &
+                 abs(top_Guide_EV$logFC) > 0.5, ]
+
+# 14491
+DMPs_Guide_WT  <-
+  top_Guide_WT[top_Guide_WT$adj.P.Val < 0.05 &
+                  abs(top_Guide_WT$logFC) > 0.5, ]
+# 113737
+DMPs_EV_WT <-
+  top_EV_WT[top_EV_WT$adj.P.Val < 0.05 &
+                  abs(top_EV_WT$logFC) > 0.5, ]
+
+
+write.table(
+  DMPs_Guide_EV,
+  paste0(outPath, "DMPs_limma_SWAN_Guide_EV.txt"),
+  sep = "\t",
+  row.names = F
+)
+write.table(
+  DMPs_Guide_WT,
+  paste0(outPath, "DMPs_limma_SWAN_Guide_WT.txt"),
+  sep = "\t",
+  row.names = F
+)
+write.table(
+  DMPs_EV_WT,
+  paste0(outPath, "DMPs_limma_SWAN_EV_WT.txt"),
+  sep = "\t",
+  row.names = F
+)
+
+DMPs_Guide_EV <-
+  read.table(
+    paste0(outPath, "DMPs_limma_SWAN_Guide_EV.txt"),
+    sep = "\t",
+    header = T,
+    na.strings = c(NA, " ", "")
+  )
+
+# DMPs_Guide_WT <- read.table(paste0(outPath, "DMPs_limma_SWAN_Guide_WT.txt"),
+#   sep = "\t",
+#   header = T)
+
+```
+
+
+
+
+### Check ZEB1 probes common
+```{r}
+## 22
+ZEB1_Guide_EV <- DMPs_Guide_EV[DMPs_Guide_EV$UCSC_RefGene_Name == "ZEB1", ]
+
+## 20
+ZEB1_Guide_WT <- DMPs_Guide_WT[DMPs_Guide_WT$UCSC_RefGene_Name == "ZEB1", ]
+
+## 16 probes are common
+zeb1Com <- intersect(ZEB1_Guide_WT$Probes, ZEB1_Guide_EV$Probes)
+
+zeb1_onlyGuideWT <- ZEB1_Guide_WT$Probes[! ZEB1_Guide_WT$Probes %in% zeb1Com]
+
+zeb1_onlyGuideEV <- ZEB1_Guide_EV$Probes[! ZEB1_Guide_EV$Probes %in% zeb1Com]
+
+```
+
+
+### Heatmaps
+#### ZEB1 probes
+```{r}
+
+# targets <- read.metharray.sheet(dataPath)
+# targets$Sample_Group <- c("WT", "WT", "EV", "EV", "EV", "Guide", "Guide", "Guide")
+# 
+# # targets <- targets[-c(1,2), ]
+# 
+# rgSet <- read.metharray.exp(targets = targets)
+# 
+# pd <- pData(rgSet)
+# pd[,1:4]
+
+sampleGroup <-
+  as.factor(c("WT", "WT", "EV", "EV",  "EV", "Guide", "Guide", "Guide"))
+
+
+zeb1Probes <- unique(c(zeb1_onlyGuideEV, zeb1_onlyGuideWT, zeb1Com))
+
+Zeb1 <- top_Guide_EV[top_Guide_EV$Probes %in% zeb1Probes, ]
+
+# Zeb1 <- DMPs[grepl("ZEB1", DMPs$UCSC_RefGene_Name), ]
+# colnames(Zeb1)[1] <- "Probe"
+
+
+textSize <- 10
+
+##------ samples
+sampleCol <- currentCols[c(1, 2, 3)]
+names(sampleCol) <-
+  c("Guide", "EV", "WT")
+
+sampleColList <-  list(Sample_Group = sampleCol)
+
+sampleHm <-
+  ComplexHeatmap::HeatmapAnnotation(Sample_Group = sampleGroup, col = sampleColList)
+  # ComplexHeatmap::HeatmapAnnotation(Sample_Group = as.factor(pd$Sample_Group), col = sampleColList)
+
+##---- probes:
+
+
+geneAnn <-
+  Zeb1[, c("UCSC_RefGene_Group" ,
+           "Relation_to_Island",
+           "Regulatory_Feature_Group"), drop = F]
+
+colnames(geneAnn)[1] <- "Probe_Group"
+rownames(geneAnn) <- Zeb1$Probes
+
+geneAnn$Regulatory_Feature <- "NA"
+geneAnn$Regulatory_Feature[geneAnn$Regulatory_Feature_Group == "Promoter_Associated"] <- "Promoter_Associated"
+geneAnn <- geneAnn[, ! colnames(geneAnn) == "Regulatory_Feature_Group"]
+
+geneAnn$Comparison <- "Non-Significant"
+geneAnn$Comparison[row.names(geneAnn)%in% zeb1_onlyGuideEV] <- "Guide vs EV"
+
+# geneAnn$Comparison <- "Common"
+# geneAnn$Comparison[row.names(geneAnn)%in% zeb1_onlyGuideEV] <- "Guide vs EV"
+# geneAnn$Comparison[row.names(geneAnn)%in% zeb1_onlyGuideWT] <- "Guide vs WT"
+
+
+groupCol <- currentCols[3:9]
+names(groupCol) <- names(table(top_Guide_EV$UCSC_RefGene_Group))[-1]
+
+islandCol <- currentCols[10:13]
+names(islandCol) <- names(table(geneAnn$Relation_to_Island))
+
+regCol <- currentCols[14:15]
+names(regCol) <- names(table(geneAnn$Regulatory_Feature))
+
+# comparCol <- c("black", "gray45", "gray90")
+comparCol <- c("black", "gray90")
+names(comparCol) <- names(table(geneAnn$Comparison))
+
+
+geneColList <- list(
+  Probe_Group = groupCol,
+  Relation_to_Island = islandCol,
+  Regulatory_Feature = regCol,
+  Comparison = comparCol
+  )
+
+geneHm <-
+  ComplexHeatmap::rowAnnotation(df = geneAnn, col = geneColList)
+
+
+library(circlize)
+##---- for beta
+col_fun = colorRamp2(c(0, 0.5, 1), c("lightblue", "purple", "navy"))
+
+##---- for mvals:
+# max(Mval[rownames(geneAnn), ])
+# col_fun <-  colorRamp2(c(-5, 0, 4), c("orange3", "lightblue", "navy"))
+
+pdf(
+  paste0(
+    figPath,
+    # "Heatmap_ZEB1_Probes_Beta_Comparisons2_June2022_onlyGuidEV.pdf"
+    "Heatmap_ZEB1_Probes_Beta_Comparisons_onlyGuideEV.pdf"
+  ),
+  height = 8,
+  width = 8
+)
+
+ComplexHeatmap::Heatmap(
+  beta[rownames(geneAnn),],
+  # Mval[rownames(geneAnn), ],
+  right_annotation  = geneHm,
+  top_annotation = sampleHm,
+  name = "Beta-value",
+  # name = "M-value",
+  # col = brewer.pal(8, "Blues"),
+  col = col_fun,
+  show_column_names = F
+)
+dev.off()
+
+```
+
+#### ZEB1 probes groups
+```{r}
+DMPs <- DMPs_Guide_EV
+
+Zeb1 <- DMPs[grepl("ZEB1", DMPs$UCSC_RefGene_Name), ]
+
+textSize <- 10
+
+sampleCol <- currentCols[c(1, 2, 3)]
+names(sampleCol) <-
+  c("Guide", "EV", "WT")
+
+sampleColList <-  list(
+  Sample_Group = sampleCol
+)
+
+sampleHm <- ComplexHeatmap::HeatmapAnnotation(Sample_Group = as.factor(pd$Sample_Group), col = sampleColList)
+
+geneAnn <- Zeb1[, "UCSC_RefGene_Group", drop = F]
+colnames(geneAnn) <- "Probe_Group"
+
+rownames(geneAnn) <- Zeb1$Probes
+
+
+geneCol <- currentCols[3:6]
+names(geneCol) <- names(table(geneAnn$Probe_Group))
+
+
+geneColList <- list(
+  Probe_Group = geneCol
+  )
+
+geneHm <-
+  ComplexHeatmap::rowAnnotation(df = geneAnn, col = geneColList)
+
+
+
+
+pdf(paste0(figPath, "Heatmap_ZEB1_Probes_Beta_Guide_WT_2.pdf"), height = 8, width = 7)
+
+ComplexHeatmap::Heatmap(beta[Zeb1$Probes, ],
+                        right_annotation  = geneHm,
+                        top_annotation = sampleHm, 
+                        name = "Beta-value", 
+                        col = brewer.pal(8, "Blues"))
+
+dev.off()
+
+```
+
+
+
+
+# GO
+We get the top 10,000 probes as sugggested by the vignette.
+```{r}
+
+GO_Guide_EV <-
+  gometh(
+    sig.cpg = rownames(topTable(fit, coef = "Guide_EV", n = 10000)),
+    all.cpg = top_Guide_EV$Probes,
+    collection = "GO",
+    array.type = "EPIC"
+  )
+
+topGSA(GO_Guide_EV)
+
+
+GO_Guide_WT <-
+  gometh(
+    sig.cpg = rownames(topTable(fit, coef = "Guide_WT", n = 10000)),
+    all.cpg = top_Guide_WT$Probes,
+    collection = "GO",
+    array.type = "EPIC"
+  )
+
+topGSA(GO_Guide_WT)
+
+
+GO_EV_WT <-
+  gometh(
+    sig.cpg = rownames(topTable(fit, coef = "EV_WT", n = 10000)),
+    all.cpg = top_EV_WT$Probes,
+    collection = "GO",
+    array.type = "EPIC"
+  )
+
+topGSA(GO_EV_WT)
+
+write.table(
+  GO_Guide_EV,
+  paste0(outPath, "GO_DMPs10K_Guide_EV_limma.txt"),
+  row.names = T,
+  sep = "\t"
+)
+write.table(
+  GO_Guide_WT,
+  paste0(outPath, "GO_DMPs10K_Guide_WT_limma.txt"),
+  row.names = T,
+  sep = "\t"
+)
+write.table(
+  GO_EV_WT,
+  paste0(outPath, "GO_DMPs10K_EV_WT_limma.txt"),
+  row.names = T,
+  sep = "\t"
+)
+
+##----- significant BPs
+write.table(
+  GO_Guide_EV[GO_Guide_EV$ONTOLOGY == "BP" & GO_Guide_EV$FDR < 0.05, ],
+  paste0(outPath, "GO_SigBP_DMPs10K_Guide_EV_limma.txt"),
+  row.names = T,
+  sep = "\t"
+)
+write.table(
+  GO_Guide_WT[GO_Guide_WT$ONTOLOGY == "BP" & GO_Guide_WT$FDR < 0.05, ],
+  paste0(outPath, "GO_SigBP_DMPs10K_Guide_WT_limma.txt"),
+  row.names = T,
+  sep = "\t"
+)
+write.table(
+    GO_EV_WT[GO_EV_WT$ONTOLOGY == "BP" & GO_EV_WT$FDR < 0.05, ],
+  paste0(outPath, "GO_SigBP_DMPs10K_EV_WT_limma.txt"),
+  row.names = T,
+  sep = "\t"
+)
+```
+
+```{r}
+xx <- topTable(fit, coef = "Guide_EV", n = 10000)
+xx2 <- annUniqProbe[rownames(xx), getCols]
+
+
+library(biomaRt)
+ensembl = useMart("ensembl",dataset="hsapiens_gene_ensembl") #uses human ensembl annotations
+#gets gene symbol, transcript_id and go_id for all genes annotated with GO:0007507
+gene.data <- getBM(
+  attributes = c('hgnc_symbol', 'go_id'),
+  filters = 'go',
+  values = c('GO:0022610', 'GO:0007155'),
+  mart = ensembl
+)
+
+
+gene.data2 <- gene.data[gene.data$go_id %in% c('GO:0022610', 'GO:0007155'), ]
+
+intersect(unique(xx2$UCSC_RefGene_Name), gene.data2$hgnc_symbol)
+intersect(intersect(unique(xx2$UCSC_RefGene_Name), gene.data2$hgnc_symbol), g)
+intersect( gene.data2$hgnc_symbol, g)
+
+## "F11R"   "LAMB3"  "PCDH9"  "ADGRG1" "EPHA3"  "CLDN1" 
+```
+
+
+```{r}
+GO_Guide_EV_sig <- GO_Guide_EV[GO_Guide_EV$ONTOLOGY == "BP" & GO_Guide_EV$FDR < 0.05, ]
+
+GO_Guide_EV_sig <- GO_Guide_EV_sig[order(GO_Guide_EV_sig$FDR), ]
+GO_Guide_EV_sigFilt <- GO_Guide_EV_sig[GO_Guide_EV_sig$N > 30 & GO_Guide_EV_sig$N < 1500, ]
+
+GO_Guide_EV_sigTop <- head(GO_Guide_EV_sigFilt, 20)
+# rownames(GO_Guide_EV_sigTop) <- GO_Guide_EV_sigTop$TERM
+
+GO_Guide_EV_sigTop$NegLogFDR <- -log10(GO_Guide_EV_sigTop$FDR)
+
+GO_Guide_EV_sigTop <- GO_Guide_EV_sigTop[order(GO_Guide_EV_sigTop$NegLogFDR), ]
+
+# GO:0007155 
+# GO:0022610 
+
+minVal <- round(min(GO_Guide_EV_sigTop$DE/GO_Guide_EV_sigTop$N), 2)
+maxVal <- round(max(GO_Guide_EV_sigTop$DE/GO_Guide_EV_sigTop$N), 2)
+medVal <- round(median(GO_Guide_EV_sigTop$DE/GO_Guide_EV_sigTop$N), 2)
+
+
+pdf(
+  paste0(figPath, "GO_DMPs_Guide_EV_top20_30-1500genesPerTerm2.pdf"),
+  height = 6,
+  width = 3.5
+)
+ggplot(GO_Guide_EV_sigTop, aes(
+  x = reorder(TERM,-NegLogFDR),
+  y = NegLogFDR,
+  fill = DE / N
+)) +
+  geom_bar(stat = "identity") +
+  ylab("-log10(FDR)") +
+  # coord_flip() +
+  theme_minimal() +
+  theme(axis.title.x = element_blank(),
+        axis.text.x = element_text(angle = 90, hjust = 1),
+        legend.position = "top",
+        legend.direction = "horizontal",
+        legend.key.width = unit(1, "cm")
+        ) 
+dev.off()
+
+```
+
+
+# KEGG
+```{r}
+KEGG_Guide_EV <-
+  gometh(
+    sig.cpg = rownames(topTable(fit, coef = "Guide_EV", n = 10000)),
+    all.cpg = top_Guide_EV$Probes,
+    collection = "KEGG",
+    array.type = "EPIC"
+  )
+
+head(KEGG_Guide_EV[order(KEGG_Guide_EV$FDR), ], 10)
+KEGG_Guide_EV <- KEGG_Guide_EV[order(KEGG_Guide_EV$FDR), ]
+
+KEGG_Guide_WT <-
+  gometh(
+    sig.cpg = rownames(topTable(fit, coef = "Guide_WT", n = 10000)),
+    all.cpg = top_Guide_WT$Probes,
+    collection = "KEGG",
+    array.type = "EPIC"
+  )
+
+head(KEGG_Guide_WT[order(KEGG_Guide_WT$FDR), ], 10)
+KEGG_Guide_WT <- KEGG_Guide_WT[order(KEGG_Guide_WT$FDR), ]
+
+KEGG_EV_WT <-
+  gometh(
+    sig.cpg = rownames(topTable(fit, coef = "EV_WT", n = 10000)),
+    all.cpg = top_EV_WT$Probes,
+    collection = "KEGG",
+    array.type = "EPIC"
+  )
+
+head(KEGG_EV_WT[order(KEGG_EV_WT$FDR), ], 10)
+
+KEGG_EV_WT <- KEGG_EV_WT[order(KEGG_EV_WT$FDR), ]
+
+
+write.table(
+  KEGG_Guide_EV,
+  paste0(outPath, "KEGG_DMPs10K_Guide_EV_limma.txt"),
+  row.names = T,
+  sep = "\t"
+)
+write.table(
+  KEGG_Guide_WT,
+  paste0(outPath, "KEGG_DMPs10K_Guide_WT_limma.txt"),
+  row.names = T,
+  sep = "\t"
+)
+write.table(
+  KEGG_EV_WT,
+  paste0(outPath, "KEGG_DMPs10K_EV_WT_limma.txt"),
+  row.names = T,
+  sep = "\t"
+)
+```
+
+
+# Methylation vs RNA-seq results
+
+## SUM159
+Read the RNA_seq results: "voom-limma_SUM159_GAll-EVC_diffExpr.csv" file - the ChIP-seq and ATAC-seq were on SUM159 sample.
+
+```{r}
+
+DMPs_Guide_EV <- read.table(
+  paste0(outPath, "DMPs_limma_SWAN_Guide_EV.txt"),
+  sep = "\t",
+  header = T
+)
+
+
+DMPs_sig <- DMPs_Guide_EV
+
+
+##---- updated RNA diff file on July 2022
+rna <-
+  read.csv(
+    "/Users/mfor0011/Documents/projects/Monash/Pilar/Github_paper_download/2022_Waryah_ZEB1_inhibition-main/preproc/rnaseq/voom-limma_SUM159_GAll-EVC_diffExpr.csv",
+    stringsAsFactors = F
+  )
+
+rna_combined <- rna
+
+dim(rna_combined)
+degsComb <- rna_combined[rna_combined$adj.P.Val < 0.05 & 
+                           abs(rna_combined$logFC) > 1, ]
+
+                         
+## map ENG to symbols
+library("org.Hs.eg.db") # remember to install it if you don't have it already
+degsComb$Symbols <-
+  mapIds(org.Hs.eg.db,
+         keys = degsComb$X,
+         keytype = "ENSEMBL",
+         column = "SYMBOL")
+
+# comGenes <- unique(intersect(degsComb$external_gene_name, DMPs_sig$UCSC_RefGene_Name))
+comGenes <- unique(intersect(degsComb$Symbols, DMPs_sig$UCSC_RefGene_Name))
+
+## 28 common genes
+
+comDMPs  <-
+  DMPs_sig[DMPs_sig$UCSC_RefGene_Name %in% comGenes, c("Probes",
+                                                       "UCSC_RefGene_Name",
+                                                       "logFC",
+                                                       "adj.P.Val",
+                                                       "UCSC_RefGene_Group",
+                                                       "pos")]
+
+colnames(comDMPs)[3:4] <- c("logFC_Meth", "adj.P.Val_Meth")
+
+# mergedMethExpr <-
+#   merge(degsComb[, c("external_gene_name", "logFC", "adj.P.Val")], comDMPs, by.x = "external_gene_name", by.y = "UCSC_RefGene_Name")
+
+mergedMethExpr <-
+  merge(degsComb[, c("Symbols", "logFC", "adj.P.Val")], comDMPs, by.x = "Symbols", by.y = "UCSC_RefGene_Name")
+
+colnames(mergedMethExpr)[2:3] <- c("logFC_RNA", "adj.P.Val_RNA")
+
+# write.csv(mergedMethExpr, paste0(outPath, "CommonGenes_logFC_RNA_Meth_June2022.csv"), row.names = F)
+
+# mergedMethExpr <- read.csv(paste0(outPath, "CommonGenes_logFC_RNA_Meth_June2022.csv"), stringsAsFactors = F)
+
+##------- If we only keep promoter/TSS and gene body probes:
+library(dplyr)
+mergedMethExprFilt <- mergedMethExpr %>% 
+  filter( 
+    grepl("TSS", UCSC_RefGene_Group) |
+      grepl("Body", UCSC_RefGene_Group)
+  )
+
+mergedMethExprFilt$Probe_Group <- "TSS"
+mergedMethExprFilt$Probe_Group[
+  grepl("Body", mergedMethExprFilt$UCSC_RefGene_Group)] <- "Body"
+
+# write.csv(
+#   mergedMethExprFilt,
+#   paste0(outPath, "CommonGenes_logFC_RNA_Meth_Filt_TssBody_July2022_SUM159.csv"),
+#   row.names = F
+# )
+
+
+pdf(
+  paste0(figPath, "logFC_Meth_TSS_Body_SUM_ordlogFCRNA_noLegend_June2022.pdf"),
+  height = 3,
+  width = 8
+)
+ggplot(mergedMethExprFilt,
+       aes(x = logFC_Meth, 
+           # y = external_gene_name,
+           # y = reorder(external_gene_name, logFC_Meth),
+           y = reorder(Symbols, logFC_RNA),
+           # y = reorder(external_gene_name, as.numeric(as.factor(Probe_Group))),
+                       color = Probe_Group)) +
+  geom_point(alpha = 0.7, show.legend = F) +
+  # geom_point(alpha = 0.7, show.legend = T) +
+  geom_vline(xintercept = 0.5) +
+  geom_vline(xintercept = -0.5) +
+    scale_color_manual(values = currentCols) +
+  coord_flip() +
+  scale_y_discrete(position = "right") +
+  theme_minimal() +
+  theme(
+    axis.title.x = element_blank(),
+    axis.text.x = element_text(angle = 90, size = 12)
+  )
+dev.off()
+
+
+pdf(
+  paste0(
+    figPath,
+    "logFC_RNA_TSS_Body_SUM_ordlogFCRNA2_noLegend_June2022.pdf"
+  ),
+  height = 2,
+  width = 8
+)
+ggplot(mergedMethExprFilt,
+       aes(x = logFC_RNA, 
+           y = reorder(Symbols, logFC_RNA))) +
+  geom_point(alpha = 0.7, show.legend = F) +
+  # geom_point(alpha = 0.7, show.legend = T) +
+  geom_vline(xintercept = 1) +
+  geom_vline(xintercept = -1) +
+    scale_color_manual(values = "black") +
+  coord_flip() +
+  scale_y_discrete(position = "right") +
+  theme_minimal() +
+  theme(
+    axis.title.x = element_blank(),
+    # axis.text.x = element_text(angle = 90, size = 12)
+    axis.text.x = element_blank()
+  )
+dev.off()
+
+
+##-------- if we only focus on TSS:
+# mergedMethExprTSS <- mergedMethExpr %>% 
+#   filter( 
+#     grepl("TSS", UCSC_RefGene_Group) 
+#   )
+# 
+# 
+# pdf(paste0(figPath, "logFC_Meth_TSS_SUM_ordlogFCRNA.pdf"), height = 6, width = 4)
+# ggplot(mergedMethExprTSS,
+#        aes(x = logFC_Meth, 
+#            # y = external_gene_name,
+#            # y = reorder(external_gene_name, logFC_Meth),
+#            y = reorder(external_gene_name, logFC_RNA))) +
+#   geom_point(alpha = 0.7, color = currentCols[2]) +
+#   geom_vline(xintercept = 0.5) +
+#   geom_vline(xintercept = -0.5) +
+#     # scale_color_manual(values = currentCols[2]) +
+#   theme_minimal() +
+#   theme(
+#     axis.title.y = element_blank()
+#   )
+# dev.off()
+# 
+# 
+# pdf(paste0(figPath, "logFC_RNA_TSS_SUM_ordlogFCRNA2.pdf"), height = 6, width = 2.2)
+# ggplot(mergedMethExprTSS,
+#        aes(x = logFC_RNA, 
+#            # y = external_gene_name,
+#            y = reorder(external_gene_name, logFC_RNA),
+#            # y = reorder(external_gene_name, as.numeric(as.factor(Probe_Group)))
+#                        # color = Probe_Group
+#            )) +
+#   geom_point(alpha = 1, color = "gray20") +
+#   geom_vline(xintercept = 1) +
+#   geom_vline(xintercept = -1) +
+#     # scale_color_manual(values = currentCols) +
+#   theme_minimal() +
+#   theme(
+#     axis.title.y = element_blank()
+#   )
+# dev.off()
+
+
+```
+
+
+### Check EMT markers
+Read EMT signatures from Thiery and Byers
+```{r}
+th <-
+  read.table(
+    "/Users/mfor0011/Documents/data/signatures/EMT/Thiery_EMTsignature_both_tumour_cellLine_EntrezIDs.txt",
+    header = T,
+    sep = "\t"
+  )
+
+b <-
+  read.table(
+    "/Users/mfor0011/Documents/data/signatures/EMT/EMT_signature_Byers.txt",
+    header = T,
+    sep = "\t"
+  )
+
+
+mes <-
+  unique(c(th$HGNC.symbol[th$epiMes_tumor == "mes" |
+                            th$epiMes_cellLine == "mes"]), b$Genes[b$E.vs.M == "M"])
+mes <- mes[complete.cases(mes)]
+
+epi <-
+  unique(c(th$HGNC.symbol[th$epiMes_tumor == "epi" |
+                            th$epiMes_cellLine == "epi"]), b$Genes[b$E.vs.M == "E"])
+epi <- epi[complete.cases(epi)] 
+
+methGenes <- unique(mergedMethExprFilt$Symbols)
+intersect(methGenes, mes)  ## "POPDC3" "ZEB1" 
+intersect(methGenes, epi)  ## "CDS1"    "DSP"     "EHF"     "F11R"    "LSR"     "MAP7"    "S100P"   "TMC6"    "TSPAN13"
+
+
+mergedMethExprFilt$EpiMes <- NA
+mergedMethExprFilt$EpiMes[mergedMethExprFilt$Symbols  %in% epi] <- "Epi"
+mergedMethExprFilt$EpiMes[mergedMethExprFilt$Symbols  %in% mes] <- "Mes"
+
+hmData <- mergedMethExprFilt %>% 
+  arrange(-logFC_RNA) %>% 
+  filter(! duplicated(Symbols))
+
+rownames(hmData) <- hmData$Symbols
+
+htEpiMes <- ComplexHeatmap::Heatmap(
+  hmData[, "EpiMes", drop = F],
+  cluster_rows = F,
+  cluster_columns = F,
+  # show_row_names = T,
+  show_row_names = F,
+  show_column_names = F,
+  row_names_gp = gpar(fontsize = 8),
+  col = list(
+    Mes = brewer.pal(9, "Blues")[8],
+    Epi = brewer.pal(9, "Blues")[5]
+    ), name = "Epi/Mes", 
+  show_heatmap_legend = F
+)
+
+
+```
+
+### Add ATAC-seq
+
+```{r}
+# chr1 160990952 160992570 peak_1365 F11R 78 111
+# chr10 31607653 31608874 peak_2202 ZEB1 195 13
+# chr11 34655367 34655905 peak_3057 EHF 39 49
+# chr19 35738543 35739984 peak_9377 LSR 31 369
+# chr4 85503748 85504666 peak_13986 CDS1 173 277
+# chr6 7541512 7542438 peak_15447 DSP 87 96
+# chr7 16792998 16793508 peak_16493 TSPAN13 290 410
+# chr9 130911461 130911850 peak_18707 LCN2 22 47
+
+atac <- read.delim("../data/atac_peak_counts_GOI.tsv")
+# atac <- c("F11R", "ZEB1", "EHF", "LSR", "CDS1", "DSP", "TSPAN13", "LCN2")
+
+
+hmData$ATACseq <- NA
+hmData$ATACseq[hmData$Symbols  %in% atac$Name] <- "Close chromatin"
+hmData$ATACseq[hmData$Symbols == "LSR"] <- "Open chromatin"
+
+
+ht <-  ComplexHeatmap::Heatmap(
+  hmData[,  "ATACseq" , drop = F],
+  cluster_rows = F,
+  cluster_columns = F,
+  # show_row_names = T,
+  show_row_names = F,
+  show_column_names = F, 
+  row_names_gp = gpar(fontsize = 8),
+  col =  list(`Close chromatin` = "purple4", `Open chromatin` = "darkorchid1"),
+  name = "ATAC-seq",
+  show_heatmap_legend = F
+)
+
+
+pdf(
+  paste0(figPath, "Heatmap_ATACseq_EpiMes_TSS_Body_SUM_ordlogFCRNA_noLegend_July2022.pdf"),
+  height = 7.8,
+  width = 0.5
+)
+draw(ht + htEpiMes)
+dev.off()
+
+
+lgd1 = Legend(
+  labels = c("Epi", "Mes"),
+  title = "\nEpi vs Mes",
+  pch = 19,
+  legend_gp = gpar(fill = c("lightblue", "darkblue")),
+  background = "white", nrow = 1, title_position = "topleft"
+)
+
+lgd2 = Legend(
+  labels = c("Open chromatin", "Close chromatin"),
+  title = "\nATAC-seq",
+  legend_gp = gpar(fill = c("darkorchid1", "purple4")),
+  background = "white", nrow = 1, title_position = "topleft", 
+)
+
+lgd3 = Legend(
+  labels = c("Body", "TSS"),
+  title = "\nProbe Location",
+  type = "points",
+  pch = 19,
+  legend_gp = gpar(col = currentCols[1:2]),
+  background = "white", nrow = 1, title_position = "topleft"
+)
+
+# pd <- packLegend(lgd1, lgd2, lgd3)
+pd <- packLegend(lgd1, lgd2, lgd3, direction = "horizontal")
+
+pdf(
+  paste0(figPath, "Heatmap_Legend_Horiz_ATACseq_EpiMes_TSS_Body_SUM_June2022.pdf"),
+  height = 1.2,
+  width = 6
+  # height = 1.2,
+  # width = 4
+)
+draw(pd)
+dev.off()
+```
+
+
+```{r}
+
+
+##------- 
+
+pdf(paste0(figPath, "logFC_RNA_SUM_June2022.pdf"), height = 8, width = 4)
+ggplot(mergedMethExprFilt,
+       aes(x = logFC_Meth, y = Symbols, color = Probe_Group)) +
+  geom_point() +
+  geom_vline(xintercept = 0.5) +
+  geom_vline(xintercept = -0.5) +
+    scale_color_manual(values = currentCols) +
+  theme_minimal() +
+  theme(
+    axis.title.y = element_blank()
+  )
+dev.off()
+
+require("ggrepel")
+pdf(
+  paste0(figPath, "logFC_ComGenes_Meth_RNA_SUM2_June2022.pdf"),
+  height = 5,
+  width = 9
+)
+ggplot(mergedMethExpr, aes(logFC_RNA, logFC_Meth, color = Symbols)) +
+  geom_point() + 
+  geom_vline(xintercept = 0)+
+  geom_hline(yintercept = 0)+
+  scale_color_manual(values = currentCols) +
+  theme_minimal()
+
+ggplot(mergedMethExpr, aes(logFC_RNA, logFC_Meth, color = UCSC_RefGene_Group)) +
+  geom_point() + 
+  geom_vline(xintercept = 0)+
+  geom_hline(yintercept = 0)+
+  scale_color_manual(values = groupCol) +
+  theme_minimal()
+
+dev.off()
+
+subData <- subset(mergedMethExpr, Symbols == "ZEB1")
+
+pdf(
+  paste0(figPath, "logFC_ComGenes_Meth_RNA_SUM_labelZEB1_June2022.pdf"),
+  height = 5,
+  width = 7
+)
+
+
+ggplot(mergedMethExpr, aes(logFC_RNA, logFC_Meth, color = UCSC_RefGene_Group)) +
+  geom_point(alpha = 0.8) + 
+  geom_vline(xintercept = 0)+
+  geom_hline(yintercept = 0)+
+  scale_color_manual(values = groupCol) +
+  theme_minimal()
+
+ggplot(mergedMethExpr, aes(logFC_RNA, logFC_Meth, color = UCSC_RefGene_Group)) +
+  geom_point(alpha = 0.8) + 
+  geom_vline(xintercept = 0)+
+  geom_hline(yintercept = 0)+
+    geom_label_repel(
+    data = subData,
+    aes(logFC_RNA, logFC_Meth, label = pos,
+        color = factor(UCSC_RefGene_Group)),
+    size = 3.5,
+  ) +
+    scale_color_manual(values = groupCol) +
+    # scale_fill_manual(values = currentCols) +
+  theme_minimal()
+
+dev.off()
+
+
+
+write.csv(
+  mergedMethExpr,
+  paste0(outPath, "Merged_RNA_Meth_CommonGenes_SUM159_June2022.csv"),
+  row.names = F
+)
+
+# mergedMethExpr <- read.csv(paste0(outPath, "Merged_RNA_Meth_CommonGenes_SUM159_June2022.csv"),
+#   stringsAsFactors  = F)
+```
+
+
+## MDA-MB-231
+
+voom-limma_MDAMB231_GAll-EVC_diffExpr.csv
+```{r}
+
+DMPs_Guide_EV <- read.table(
+  paste0(outPath, "DMPs_limma_SWAN_Guide_EV.txt"),
+  sep = "\t",
+  header = T
+)
+
+
+DMPs_sig <- DMPs_Guide_EV
+
+##---- updated RNA diff file on July 2022 from Joe
+rna_combined  <-
+  read.csv(
+    "/Users/mfor0011/Documents/projects/Monash/Pilar/Github_paper_download/2022_Waryah_ZEB1_inhibition-main/preproc/rnaseq/voom-limma_MDAMB231_GAll-EVC_diffExpr.csv",
+    stringsAsFactors = F
+  )
+
+
+dim(rna_combined)
+degsComb <- rna_combined[rna_combined$adj.P.Val < 0.05 & 
+                           abs(rna_combined$logFC) > 1, ]
+
+                         
+## map ENG to symbols
+library("org.Hs.eg.db") # remember to install it if you don't have it already
+degsComb$Symbols <-
+  mapIds(org.Hs.eg.db,
+         keys = degsComb$X,
+         keytype = "ENSEMBL",
+         column = "SYMBOL")
+
+write.csv(degsComb, paste0(outPath, "DEGs_MDA231_logFC1_adjPval0.05.csv"), row.names = F)
+
+comGenes <- unique(intersect(degsComb$Symbols, DMPs_sig$UCSC_RefGene_Name))
+
+## 89 common genes
+
+comDMPs  <-
+  DMPs_sig[DMPs_sig$UCSC_RefGene_Name %in% comGenes, c("Probes",
+                                                       "UCSC_RefGene_Name",
+                                                       "logFC",
+                                                       "adj.P.Val",
+                                                       "UCSC_RefGene_Group",
+                                                       "pos")]
+
+colnames(comDMPs)[3:4] <- c("logFC_Meth", "adj.P.Val_Meth")
+
+
+mergedMethExpr <-
+  merge(degsComb[, c("Symbols", "logFC", "adj.P.Val")], comDMPs, by.x = "Symbols", by.y = "UCSC_RefGene_Name")
+
+colnames(mergedMethExpr)[2:3] <- c("logFC_RNA", "adj.P.Val_RNA")
+
+write.csv(
+  mergedMethExpr,
+  paste0(outPath, "CommonGenes_logFC_RNA_Meth_MDAMB231.csv"),
+  row.names = F
+)
+
+# mergedMethExpr <- read.csv(paste0(outPath, "CommonGenes_logFC_RNA_Meth_MDAMB231.csv"), stringsAsFactors = F)
+
+##------- If we only keep promoter/TSS and gene body probes:
+
+mergedMethExprFilt <- mergedMethExpr %>% 
+  filter( 
+    grepl("TSS", UCSC_RefGene_Group) |
+      grepl("Body", UCSC_RefGene_Group)
+  )
+
+mergedMethExprFilt$Probe_Group <- "TSS"
+mergedMethExprFilt$Probe_Group[
+  grepl("Body", mergedMethExprFilt$UCSC_RefGene_Group)] <- "Body"
+
+write.csv(
+  mergedMethExprFilt,
+  paste0(outPath, "CommonGenes_logFC_RNA_Meth_Filt_TssBody_MDAMB231.csv"),
+  row.names = F
+)
+
+
+pdf(
+  paste0(figPath, "logFC_Meth_TSS_Body_MDAMB231_ordlogFCRNA_noLegend.pdf"),
+  height = 3,
+  width = 12
+)
+ggplot(mergedMethExprFilt,
+       aes(x = logFC_Meth, 
+           y = reorder(Symbols, logFC_RNA),
+                       color = Probe_Group)) +
+  geom_point(alpha = 0.7, show.legend = F) +
+  geom_vline(xintercept = 0.5) +
+  geom_vline(xintercept = -0.5) +
+    scale_color_manual(values = currentCols) +
+  coord_flip() +
+  scale_y_discrete(position = "right") +
+  theme_minimal() +
+  theme(
+    axis.title.x = element_blank(),
+    axis.text.x = element_text(angle = 90, size = 12)
+  )
+dev.off()
+
+
+pdf(
+  paste0(
+    figPath,
+    "logFC_RNA_TSS_Body_MDAMB231_ordlogFCRNA2_noLegend.pdf"
+  ),
+  height = 2,
+  width = 12
+)
+ggplot(mergedMethExprFilt,
+       aes(x = logFC_RNA, 
+           y = reorder(Symbols, logFC_RNA))) +
+  geom_point(alpha = 0.7, show.legend = F) +
+  # geom_point(alpha = 0.7, show.legend = T) +
+  geom_vline(xintercept = 1) +
+  geom_vline(xintercept = -1) +
+    scale_color_manual(values = "black") +
+  coord_flip() +
+  scale_y_discrete(position = "right") +
+  theme_minimal() +
+  theme(
+    axis.title.x = element_blank(),
+    # axis.text.x = element_text(angle = 90, size = 12)
+    axis.text.x = element_blank()
+  )
+dev.off()
+
+
+
+```
+
+
+
+### Check EMT markers
+Read EMT signatures from Thiery and Byers
+```{r}
+th <-
+  read.table(
+    "/Users/mfor0011/Documents/data/signatures/EMT/Thiery_EMTsignature_both_tumour_cellLine_EntrezIDs.txt",
+    header = T,
+    sep = "\t"
+  )
+
+b <-
+  read.table(
+    "/Users/mfor0011/Documents/data/signatures/EMT/EMT_signature_Byers.txt",
+    header = T,
+    sep = "\t"
+  )
+
+
+mes <-
+  unique(c(th$HGNC.symbol[th$epiMes_tumor == "mes" |
+                            th$epiMes_cellLine == "mes"]), b$Genes[b$E.vs.M == "M"])
+mes <- mes[complete.cases(mes)]
+
+epi <-
+  unique(c(th$HGNC.symbol[th$epiMes_tumor == "epi" |
+                            th$epiMes_cellLine == "epi"]), b$Genes[b$E.vs.M == "E"])
+epi <- epi[complete.cases(epi)] 
+
+methGenes <- unique(mergedMethExprFilt$Symbols)
+intersect(methGenes, mes)  
+# [1] "FBLN1" "TAGLN" "ZEB1"
+intersect(methGenes, epi)  
+ # [1] "CDS1"    "DSC2"    "DSG2"    "DSP"     "ESRP1"   "EXPH5"   "F11R"    "MAP7"   
+ # [9] "MYO1D"   "PKP3"    "SFN"     "TSPAN1"  "TSPAN13" "TUFT1"  
+
+mergedMethExprFilt$EpiMes <- NA
+mergedMethExprFilt$EpiMes[mergedMethExprFilt$Symbols  %in% epi] <- "Epi"
+mergedMethExprFilt$EpiMes[mergedMethExprFilt$Symbols  %in% mes] <- "Mes"
+
+hmData <- mergedMethExprFilt %>% 
+  arrange(-logFC_RNA) %>% 
+  filter(! duplicated(Symbols))
+
+rownames(hmData) <- hmData$Symbols
+
+htEpiMes <- ComplexHeatmap::Heatmap(
+  hmData[, "EpiMes", drop = F],
+  cluster_rows = F,
+  cluster_columns = F,
+  # show_row_names = T,
+  show_row_names = F,
+  show_column_names = F,
+  row_names_gp = gpar(fontsize = 8),
+  col = list(
+    Mes = brewer.pal(9, "Blues")[8],
+    Epi = brewer.pal(9, "Blues")[5]
+    ), name = "Epi/Mes", 
+  show_heatmap_legend = F
+)
+
+
+
+
+```
+
+### Add ATAC-seq
+
+```{r}
+atac <- read.delim("../data/atac_peak_counts_GOI.tsv")
+
+hmData$ATACseq <- NA
+hmData$ATACseq[hmData$Symbols  %in% atac$Name] <- "Close chromatin"
+hmData$ATACseq[hmData$Symbols == "LSR"] <- "Open chromatin"
+
+
+
+ht <-  ComplexHeatmap::Heatmap(
+  hmData[,  "ATACseq" , drop = F],
+  cluster_rows = F,
+  cluster_columns = F,
+  # show_row_names = T,
+  show_row_names = F,
+  show_column_names = F, 
+  row_names_gp = gpar(fontsize = 8),
+  col =  list(`Close chromatin` = "purple4", `Open chromatin` = "darkorchid1"),
+  name = "ATAC-seq",
+  show_heatmap_legend = F
+)
+
+
+pdf(
+  paste0(figPath, "Heatmap_ATACseq_EpiMes_TSS_Body_MDAMB132_ordlogFCRNA_noLegend.pdf"),
+  height = 12,
+  width = 0.5
+)
+draw(ht + htEpiMes)
+dev.off()
+
+
+lgd1 = Legend(
+  labels = c("Epi", "Mes"),
+  title = "\nEpi vs Mes",
+  pch = 19,
+  legend_gp = gpar(fill = c("lightblue", "darkblue")),
+  background = "white", nrow = 1, title_position = "topleft"
+)
+
+lgd2 = Legend(
+  labels = c("Open chromatin", "Close chromatin"),
+  title = "\nATAC-seq",
+  legend_gp = gpar(fill = c("darkorchid1", "purple4")),
+  background = "white", nrow = 1, title_position = "topleft", 
+)
+
+lgd3 = Legend(
+  labels = c("Body", "TSS"),
+  title = "\nProbe Location",
+  type = "points",
+  pch = 19,
+  legend_gp = gpar(col = currentCols[1:2]),
+  background = "white", nrow = 1, title_position = "topleft"
+)
+
+pd <- packLegend(lgd1, lgd2, lgd3, direction = "horizontal")
+
+pdf(
+  paste0(figPath, "Heatmap_Legend_Horiz_ATACseq_EpiMes_TSS_Body_MDAMB231.pdf"),
+  height = 1.2,
+  width = 6
+)
+draw(pd)
+dev.off()
+```
+
+
+### Scatterplots RNA vs Methyl logFCs
+```{r}
+
+require("ggrepel")
+pdf(
+  paste0(figPath, "logFC_ComGenes_Meth_RNA_MDAMB231.pdf"),
+  height = 5,
+  width = 9
+)
+ggplot(mergedMethExpr, aes(logFC_RNA, logFC_Meth, color = Symbols)) +
+  geom_point() + 
+  geom_vline(xintercept = 0)+
+  geom_hline(yintercept = 0)+
+  scale_color_manual(values = currentCols) +
+  theme_minimal()
+
+ggplot(mergedMethExpr, aes(logFC_RNA, logFC_Meth, color = UCSC_RefGene_Group)) +
+  geom_point() + 
+  geom_vline(xintercept = 0)+
+  geom_hline(yintercept = 0)+
+  scale_color_manual(values = groupCol) +
+  theme_minimal()
+
+dev.off()
+
+subData <- subset(mergedMethExpr, Symbols == "ZEB1")
+
+pdf(
+  paste0(figPath, "logFC_ComGenes_Meth_RNA_MDAMB231_labelZEB1.pdf"),
+  height = 5,
+  width = 7
+)
+
+ggplot(mergedMethExpr, aes(logFC_RNA, logFC_Meth, color = UCSC_RefGene_Group)) +
+  geom_point(alpha = 0.8) + 
+  geom_vline(xintercept = 0)+
+  geom_hline(yintercept = 0)+
+  scale_color_manual(values = groupCol) +
+  theme_minimal()
+
+ggplot(mergedMethExpr, aes(logFC_RNA, logFC_Meth, color = UCSC_RefGene_Group)) +
+  geom_point(alpha = 0.8) + 
+  geom_vline(xintercept = 0)+
+  geom_hline(yintercept = 0)+
+    geom_label_repel(
+    data = subData,
+    aes(logFC_RNA, logFC_Meth, label = pos,
+        color = factor(UCSC_RefGene_Group)),
+    size = 3.5,
+  ) +
+    scale_color_manual(values = groupCol) +
+    # scale_fill_manual(values = currentCols) +
+  theme_minimal()
+
+dev.off()
+
+
+```
+
+## Check 26 genes from SUM in MDA
+```{r}
+mergedMethExprFilt <-
+  read.csv(
+    paste0(
+      outPath,
+      "CommonGenes_logFC_RNA_Meth_Filt_TssBody_July2022_SUM159.csv"
+    ),
+    stringsAsFactors = F
+  )
+
+rna_combined  <-
+  read.csv(
+    "/Users/mfor0011/Documents/projects/Monash/Pilar/Github_paper_download/2022_Waryah_ZEB1_inhibition-main/preproc/rnaseq/voom-limma_MDAMB231_GAll-EVC_diffExpr.csv",
+    stringsAsFactors = F
+  )
+
+                         
+## map ENG to symbols
+library("org.Hs.eg.db") # remember to install it if you don't have it already
+rna_combined$Symbols <-
+  mapIds(org.Hs.eg.db,
+         keys = rna_combined$X,
+         keytype = "ENSEMBL",
+         column = "SYMBOL")
+
+
+rna_combined_26 <- rna_combined[rna_combined$Symbols %in% mergedMethExprFilt$Symbols, ]
+
+pdf(
+  paste0(
+    figPath,
+    "logFC_RNA_MDAMB231_26GenesFromSUM159_ordlogFCRNA.pdf"
+  ),
+  height = 3,
+  width = 8
+)
+ggplot(rna_combined_26,
+       aes(x = logFC, 
+           y = reorder(Symbols, logFC))) +
+  geom_point(alpha = 0.7, show.legend = F) +
+  # geom_point(alpha = 0.7, show.legend = T) +
+  geom_vline(xintercept = 1) +
+  geom_vline(xintercept = -1) +
+    scale_color_manual(values = "black") +
+  coord_flip() +
+  scale_y_discrete(position = "right") +
+  theme_minimal() +
+  theme(
+    axis.title.x = element_blank(),
+    axis.text.x = element_text(angle = 90, size = 12)
+    # axis.text.x = element_blank()
+  )
+dev.off()
+```
+
